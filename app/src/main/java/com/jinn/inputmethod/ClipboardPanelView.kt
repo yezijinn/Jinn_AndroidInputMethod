@@ -154,7 +154,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private lateinit var actionFavorite: TextView
     private lateinit var actionDelete: TextView
 
-    /** 图片条目专属的三个动作（文本条目时隐藏） */
+    /** 图片条目专属动作：转图库（文本条目时隐藏；复制 / 保存只在历史页提供） */
     private lateinit var actionMove: TextView
     private var longPressItem: ClipboardDb.Item? = null
 

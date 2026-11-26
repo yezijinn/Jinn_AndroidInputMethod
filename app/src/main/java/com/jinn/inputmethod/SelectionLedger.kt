@@ -24,7 +24,7 @@ import javax.crypto.SecretKey
  * ② 只认以 `\n` 结尾的完整行：崩溃可能留下半行，解析时整行丢弃（[parse]）；
  * ③ 写入走专用后台线程：按键路径不碰磁盘。
  *
- * 落盘是逐行加密的（[LedgerCrypto]）：磁盘上每行是 `1:base64(iv||密文)`，明文只在内存里。
+ * 落盘是逐行加密的（[LedgerCrypto]）：首行是 `#jinn-picks1` 标识，其后每行是 `1:base64(iv||密文)`，明文只在内存里。
  * 之所以不整文件加密：只增流水整表重写会违背「记录不影响性能」；行级 AEAD 仍是 O(1) 追加。
  * 旧版明文文件在首次读写时就地迁移（[migrateIfNeeded]），数据一条不丢。
  *
@@ -37,7 +37,7 @@ object SelectionLedger {
 
     const val FILE_NAME = "user_picks.txt"
 
-    /** 台账数据密钥（被 Keystore 包裹，独立别名；见 [LedgerCrypto.KEY_FILE]） */
+    /** 台账数据密钥（Keystore 包裹；别名独立于剪贴板 / 凭据，但与用户词频共用同一把 DEK；见 [LedgerCrypto.KEY_FILE]） */
     const val KEY_FILE_NAME = LedgerCrypto.KEY_FILE
 
     /**
@@ -213,7 +213,7 @@ object SelectionLedger {
      *
      * @param timeoutMs 调用方最多等多久（默认 `FLUSH_TIMEOUT_MS`）。超时只缩短「这一等」，
      *   不会丢队：写盘在 [writer] 线程上照旧跑完，失败的行留队等下一次 record / flush 带走。
-     *   ⚠ 边界：队列是进程级内存，**进程随后被杀**则那几行随进程消失（`onDestroy` 之后没有「下一次」）。
+     *   边界：队列是进程级内存，**进程随后被杀**则那几行随进程消失（`onDestroy` 之后没有「下一次」）。
      *   正常路径一次追加几十微秒，300ms 覆盖得住；只有队列里压着上万行批量导入才会超时。
      *   销毁路径传 `JinnIme.FLUSH_ON_DESTROY_MS`（300ms）—— 那条路径阻塞的是主线程（BUG.md L-1451）。
      * @return 队列已空且本次写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
@@ -442,7 +442,7 @@ object SelectionLedger {
     }
 
     /**
-     * 只重写首行标识：保留全部密文记录行，丢掉前置垃圾（BOM / 空行 / 半截注释）。
+     * 只重写首行标识：保留全部密文记录行，丢掉非记录行（BOM / 空行 / 半截注释）。
      *
      * @return 是否写成。没有任何记录行且原文也没有标识时返回 false（交给明文迁移判定）。
      */
@@ -716,7 +716,7 @@ object SelectionLedger {
         val sb = StringBuilder(rows.size * 24 + 128)
         when (format) {
             ExportFormat.RIME_YAML -> {
-                // name 必须与落盘文件名（user_dict.dict.yaml）一致，否则 Rime 找不到
+                // name 取落盘文件名去掉 .dict.yaml 后缀（user_dict.dict.yaml → user_dict），否则 Rime 找不到
                 sb.append("---\nname: user_dict\nversion: \"1\"\nsort: by_weight\n")
                 sb.append("use_preset_vocabulary: false\n...\n")
                 for ((key, count) in rows) {
