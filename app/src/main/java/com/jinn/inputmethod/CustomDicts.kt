@@ -33,7 +33,7 @@ import org.tukaani.xz.XZOutputStream
  * （见 [saveHuman] / [readSource]）。
  *
  * 职责边界：本层只做「校验 + 归一 + 打包 + 原子落盘」；装载复用 `PinyinEngine.loadExtensionDict`
- * 扫 `dicts/` 目录下全部 `.xz` 的既有路径，备份复用 `ConfigBackup` 的 dicts 节（导出按目录收，
+ * 扫 `dicts/` 目录下全部 `.xz` 的既有路径，备份复用 `ConfigBackup` 的 dicts 节（导出按白名单收，
  * 导入对这一件额外做**结构校验**后放行，见 [isValidPackFile]）。
  */
 internal object CustomDicts {
@@ -260,7 +260,7 @@ internal object CustomDicts {
      *
      * 闸位判定在调用侧、写完临时件之后 —— 命中 TOO_BIG / TOO_MANY / NO_VALID 时把临时件删掉，
      * 源文本与包这两个正式文件一个都不动。与「先扫一遍、再写一遍」相比少一遍全量格式化
-     * （1057 万字符的输入在一遍格式化上是百毫秒量级）。
+     * （输入上限 8M 字符，省掉的那一遍全量格式化在手机上不是免费开销）。
      *
      * 写盘失败的兜底也在这里：删掉半截临时件，**另扫一遍**（不写盘）保证闸位判定照样完整，
      * 返回的 [Pass1] 里 stagedSource 为 null；调用侧过闸后按 WRITE_FAIL_SOURCE 上报（判闸先于写盘结果）。
@@ -668,7 +668,7 @@ internal object CustomDicts {
      * @property gate    闸位（[SaveGate.OK] 以外都不该重启输入法）
      * @property entries 解析出的词条数
      * @property skipped 跳过的行数
-     * @property filtered 字表闸（繁体 / 生僻字）打不出的条数（仅在成功路径统计）
+     * @property filtered 字表闸打不出的条数（仅单字按「加更多生僻字」档位判定，词组不受限；只在成功路径统计）
      * @property dropped 同键词表超 [MAX_WORDS_PER_KEY] 被丢下的条数（BUG.md L-864，只在走完打包时统计）
      */
     data class SaveReport(
