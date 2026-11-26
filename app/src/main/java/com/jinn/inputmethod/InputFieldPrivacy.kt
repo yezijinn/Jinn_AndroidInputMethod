@@ -62,7 +62,7 @@ object InputFieldPrivacy {
         // 就走这条通道，此时用户点翻译的意图不足以覆盖宿主的声明。
         if (imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING != 0) return true
         if (isPasswordField(inputType)) return true
-        // 其余一律放行。真机实测（2026-10-01，Via 浏览器搜索框）：
+        // 其余一律放行。实测于 Via 浏览器搜索框（2026-10-01）：
         //   inputType=0x80001   = TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_NO_SUGGESTIONS
         //   imeOptions=0x8000002 = IME_ACTION_GO | IME_FLAG_NAVIGATE_NEXT，没有 NO_PERSONALIZED_LEARNING
         //   fieldId=0xffffffff
