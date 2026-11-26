@@ -37,7 +37,7 @@ internal object TranslationClient {
     /**
      * 结构化错误摘要里错误码的最大长度。
      *
-     * 2026-10-01，L-214：从 40 收到 2440 恰好装得下一把完整的 API Key（`sk-…` 常见
+     * 2026-10-01，L-214：从 40 收到 24：40 恰好装得下一把完整的 API Key（`sk-…` 常见
      * 30~50 字符），与下面 [looksLikeCredential] 的负判据一起收紧。
      */
     private const val MAX_ERROR_CODE_CHARS = 24
@@ -55,7 +55,7 @@ internal object TranslationClient {
      * `TranslationText.MAX_READ_CHARS`（10 万）个**码位**，UTF-8 最坏 4 字节/码位 ⇒ 上界
      * 400 KB。原先 256 KB 与它脱钩：`peekBody` 截断后首字符仍是 `{`，过得了门户判别，
      * 随后 `JSONObject` 抛异常 ⇒ 一条**完全合法**的长请求（DeepL 默认上限就是 10 万）
-     * 被归成「服务异常」，已付费却一个字都不写。
+     * 被归成「服务异常，请稍后重试」，已付费却一个字都不写。
      */
     private const val MAX_BODY_BYTES = 420L * 1024
 
@@ -119,9 +119,9 @@ internal object TranslationClient {
     ): TranslationProvider? = when (id) {
         // 所有凭据统一走 cleanCredential()：先剥不可见字符（NBSP / 零宽 / BOM）再 trim。
         // 从网页/文档复制 Key 时这些字符极常见，而 trim 不删它们；带进 OkHttp 的 header 会抛
-        // IllegalArgumentException（探针实测 `Unexpected char 0xa0`），被本文件的 runCatching 兜成
-        // PARAM → 用户看到「请检查语言设置」，与真实原因（肉眼不可见的字符）完全无关
-        // （2026-09-30）。
+        // IllegalArgumentException（探针实测 `Unexpected char 0xa0`）。故在源头剥掉，
+        // 构造期 catch 归 CREDENTIAL，提示「凭据含不可见字符，未发送请求（请重新粘贴 Key）」
+        // 正点真因（2026-09-30）。
         TranslationProviderId.ALIYUN -> {
             val keyId = aliyunKeyId.cleanCredential()
             val secret = aliyunKeySecret.cleanCredential()
@@ -235,7 +235,8 @@ internal object TranslationClient {
             // 凭据含 Header 非法字符（`IllegalArgumentException`）单独归因（2026-10-02，L-429）：
             // 归 PARAM 会把用户引向「语言方向 / 模型名 / 路径」——那是他刚检查过的东西；
             // 真因在 Key 里混了不可见字符（与 fetchModels 的 -3 / TEXT_KEY_INVALID 同源）。
-            // 其余构造期异常（URL 非法等）仍归 PARAM。
+            // ⚠ 归因偏保守：`url()` 对非法地址同样抛 `IllegalArgumentException` ⇒ 地址写错时也会
+// 得到「凭据含不可见字符」，与真因不符（待区分）。
             val error = if (it is IllegalArgumentException) {
                 TranslationError.CREDENTIAL
             } else {
@@ -271,7 +272,7 @@ internal object TranslationClient {
         // ⚠ 写超时同样要派生（2026-10-03，L-703）：基线 client 从未设置 `writeTimeout`
         // ⇒ 一直是 OkHttp 默认的 **10s**。各家 body 可达 100~300 KB（DeepL 上限 100 KB、
         // Azure 50 KB，JSON 转义后更大），弱网（200 kbps）下 300 KB ≈ 12 s > 10 s ⇒
-        // `SocketTimeoutException` 被归成 NETWORK「网络错误，请检查网络」，而网络其实是通的，
+        // `SocketTimeoutException` 被归成 NETWORK「网络错误，请检查网络后重试」，而网络其实是通的，
         // 用户会反复重试、每次真计费。三处超时必须一起派生。
         // `newBuilder()` 复用连接池与线程池，成本可忽略。
         val client = if (provider.callTimeoutSec > 0) {
@@ -334,7 +335,7 @@ internal object TranslationClient {
                     // 3xx：重定向是**刻意关闭**的（L-306，防不可信网关把用户正文转投到
                     // `Location` 指定的任意主机），所以这里不会自动跟随 —— 但原先 3xx 与 5xx
                     // 同归 SERVER ⇒ 「网关尾斜杠归一 / http→https 升级 / 路径补全」这类
-                    // **用户可修**的问题被显示成「服务异常」，用户只会反复重试（每次真计费）。
+                    // **用户可修**的问题被显示成「服务异常，请稍后重试」，用户只会反复重试（每次真计费）。
                     // 单列一条指向真因（2026-10-03，L-600）。
                     if (it.code in 300..399) {
                         // 只记 Location 的 **host**：全 URL 可能带 query（凭据形态），不能落盘
@@ -357,9 +358,9 @@ internal object TranslationClient {
                         return@use
                     }
                     // 2xx 但**不是 JSON**：公共 WiFi 的门户页 / 企业 MITM 代理会回 200 + text/html
-                    // 登录页 ⇒ 原先归 SERVER（「请稍后重试」），而真因是「网络还没认证」，
+                    // 登录页 ⇒ 原先归 SERVER（「服务异常，请稍后重试」），而真因是「网络还没认证」，
                     // 重试一百次也没用（2026-10-03，L-601）。归 NETWORK 与 DNS / 私有 CA
-                    // 失败（已正确归 NETWORK 并提示「检查网络」）口径一致。
+                    // 失败（已正确归 NETWORK 并提示「网络错误，请检查网络后重试」）口径一致。
                     // 空 body 不算：那是「网关返回空」的既有分支，交给各 Provider 处理。
                     if (it.code in 200..299 && body != null && body.isNotBlank() && !looksLikeJson(body)) {
                         Diagnostics.w(
@@ -377,9 +378,10 @@ internal object TranslationClient {
                     if (it.code !in 200..299) {
                         // 401/403 补 UA 与 `Server:` 摘要（2026-10-03，L-606）：翻译请求不带
                         // 自定义 UA（用的是 `okhttp/4.x`），Cloudflare / WAF 类网关按 UA 拦时回 403，
-                        // 而那会被归成 AUTH（「请检查凭据」）⇒ 用户反复核对正确的 Key 也无效。
+                        // 而那会被归成 AUTH（真值「认证失败：请检查凭据（API Key / AppID / SecretKey / AccessKey）与 Azure 区域」）
+                        // ⇒ 用户反复核对正确的 Key 也无效。
                         // 有了这两项，「网关拦 UA」与「Key 无效」在诊断包里才分得开。
-                        // ⚠ 两者都是服务端可控文本：只取头部、截断 64 字符，且绝不记 URL / query。
+                        // ⚠ 两者都是服务端可控文本：只取头部、截断 48 字符，且绝不记 URL / query。
                         val gateway = if (it.code == 401 || it.code == 403) {
                             // ⚠ 走 headerBrief 而不是 take(64)（2026-10-03，L-620）：
                             // 这两个头是服务端可控的，可能回显我们发出去的凭据（含 32 位纯 hex 形态，
@@ -408,7 +410,7 @@ internal object TranslationClient {
                             TranslationOutcome.Fail(TranslationError.SERVER)
                         }
                     // 2xx 也可能是错误（网关常用 200 承载限额 / 欠费；截断后的半截 JSON 同样解析失败）：
-                    // 只留一行 len 的话，用户看到「服务异常」而日志里查不出为什么（2026-10-01，L-243）
+                    // 只留一行 len 的话，用户看到「服务异常，请稍后重试」而日志里查不出为什么（2026-10-01，L-243）
                     if (it.code in 200..299 &&
                         // 不再限定 SERVER（2026-10-01，L-274）：原条件把「2xx 承载额度 / 认证类
                         // 失败」挡在门外，而这段逻辑的目标恰恰是网关用 200 报限额与欠费 —— 用户报

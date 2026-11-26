@@ -48,7 +48,7 @@ class OpenAiSettingsActivity : Activity() {
     private lateinit var spinnerTarget: UserAwareSpinner
     private lateinit var textHint: TextView
 
-    /** 显式保存入口与结果提示（2026-10-01：参数多，改完要有看得见的「保存」与结果） */
+    /** 显式保存入口与结果提示（2026-10-01 参数多，改完要有看得见的「保存」与结果） */
     private lateinit var btnSave: Button
     private lateinit var textSaveHint: TextView
 
@@ -478,7 +478,7 @@ class OpenAiSettingsActivity : Activity() {
         prefs.openAiResponsePath = editResponsePath.text.toString()
         // `toIntOrNull()` 不忽略空白（走 `Integer.parseInt` 语义）⇒ 粘贴 `" 30"` 会静默落回默认值，
         // 而同一页的数字三项（`applyNumberField`）与「原文范围」页的字节上限都做了 `trim()`
-        // （2026-10-02：同族数值字段口径统一）
+        // （2026-10-02 同族数值字段口径统一）
         prefs.openAiTimeoutSec = editTimeout.text.toString().trim().toIntOrNull()
             ?: OpenAiTranslator.DEFAULT_TIMEOUT_SEC
         prefs.openAiExtraHeaders = editHeaders.text.toString()
@@ -532,7 +532,7 @@ class OpenAiSettingsActivity : Activity() {
 
     /**
      * 数字字段的保存：留空 = 不发该参数（清错误）；非空但非法 ⇒ 标红并留痕
-     * （2026-10-02 修复 L-370：此前非法值原样存下、请求里被静默丢弃，用户以为参数生效了）。
+     * （2026-10-02 修复 L-370，此前非法值原样存下、请求里被静默丢弃，用户以为参数生效了）。
      *
      * 非法值仍照写（「留空即不发」的语义与所见即所得不变），由 [OpenAiTranslator.numberOrNull]
      * 在组装请求体时兜住；这里只负责让用户**在设置页就看见**。
@@ -633,7 +633,7 @@ class OpenAiSettingsActivity : Activity() {
         }
         setHint(TEXT_FETCHING)
         // 直接读内存值：saveValues() 刚把编辑框写进 Prefs，请求用的就是这份内存值。
-        // （2026-09-30：此处原先的 flush() 是多余的 —— 它挡不住任何真实故障，却把
+        // （2026-09-30 此处原先的 flush() 是多余的 —— 它挡不住任何真实故障，却把
         //  「整份 prefs 重写 + fsync」放进主线程点击回调；真正的落盘在 onPause。）
         fetchGeneration++
         val generation = fetchGeneration
@@ -783,7 +783,7 @@ const val TEXT_EXTRA_JSON_HINT =
         const val TEXT_KEY_INVALID = "Key 里混入了不可见字符（从网页复制常见），请重新粘贴"
     const val TEXT_PROMPT_MISSING = "提示词里没有 {{text}}：请求不会带原文，会把原文追加到提示词之后"
 
-    /** 数字参数非法（2026-10-02 修复 L-370：该参数不会被发送，此前完全静默） */
+    /** 数字参数非法（2026-10-02 修复 L-370，该参数不会被发送，此前完全静默） */
     const val TEXT_NUMBER_INVALID = "不是合法数字，该参数不会被发送"
 
     // ⚠ 「端点必须 https」这句**不在本页定义**（2026-10-03，L-816）：统一用

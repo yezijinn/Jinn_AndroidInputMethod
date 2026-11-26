@@ -877,10 +877,10 @@ class CustomDictEditActivity : Activity() {
     // ── 版面 ──
 
     /**
-     * 顶栏：左标题、右「保存」+ 关闭（与词库页同款 card_bg 底色，夜间为 #141C33 深蓝）。
+     * 顶栏：左标题、右「保存」+ 关闭（与词库页同款 card_bg 底色，夜间为 #141C33）。
      *
      * 「保存」放顶栏而不是底部：本页打开即弹键盘，而 Android 10 真机上键盘是**覆盖**窗口
-     * （`adjustResize` 未缩短布局），底部按钮会被键盘压住点不到 —— 2026-10-05 真机实证。
+     * （`adjustResize` 未缩短布局），底部按钮会被键盘压住点不到（2026-10-05 真机实证）。
      */
     private fun buildTopBar(): View {
         val bar = LinearLayout(this).apply {
