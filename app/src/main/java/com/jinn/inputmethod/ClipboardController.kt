@@ -75,7 +75,7 @@ class ClipboardController(context: Context) {
     }
 
     // 这里故意没有「本次变化来自自身，跳过保存」的抑制标记。
-    // 本类是全应用唯一的入库入口，而 IME 侧唯一的 setPrimaryClip（功能面板「复制选中」）
+    // 本类是系统剪贴板监听这条采集路径的入库入口，IME 侧唯一的 setPrimaryClip（功能面板「复制选中」）
     // 本就希望被记进历史（见 JinnIme.copySelection）。早先的 ownCommit 标记却被三处
     // 「粘贴」路径置位，它们都不写系统剪贴板，标记只会被监听侧当成「下一次变化是自身的」
     // 吞掉一次：粘贴后 3 秒内的真实复制会被静默丢弃，历史里根本查不到。
@@ -199,7 +199,7 @@ class ClipboardController(context: Context) {
             return
         }
         // 取文本一律放后台：URI 型条目要打开 content:// 流（**带预算**读，见
-        // `ClipboardStore.readTextWithBudget` 与 BUG.md L-171），在主线程上就是一次文件读，
+        // `ClipboardStore.itemTextResult` 与 BUG.md L-171），在主线程上就是一次文件读，
         // 输入法键盘卡顿甚至 ANR 的来源。回调里只做开销极小的 ClipData 快照读取。
         BackgroundIo.run { extractAndSave(clip) }
     }
@@ -210,13 +210,13 @@ class ClipboardController(context: Context) {
      * URI 型条目**不走** `coerceToText`：AOSP 对 URI 的实现是「打开流的 `while(read)` 追加进
      * StringBuilder」，没有任何长度上限，而单条上限在写库那一步才判 ⇒ 复制一个大文件会先把
      * 整份内容分配出来，超限才被丢，`jinn-clipboard-io` 线程 OOM、进程被杀（BUG.md L-171）。
-     * 现在 URI 型统一走 [ClipboardStore.readTextWithBudget]（边读边判、读满即放弃），
+     * 现在 URI 型统一走 [ClipboardStore.itemTextResult]（边读边判、读满即放弃），
      * 且先看 MIME：非文本类型连流都不开。文本 / Intent 型是内存拷贝，维持 `coerceToText`。
      * 正常与重试两条路径都走这里，算法一致。0 条目守卫也集中在这里（`getItemAt(0)` 越界会抛异常），
      * 总开关同样在这里再查一次 —— 重试路径可以比入口晚 250ms 才跑，其间用户可能已关掉开关。
      */
     private fun extractAndSave(clip: android.content.ClipData) {
-        // 总开关在这条唯一入库入口上再查一次（BUG.md L-1468）：入口 `onClipboardChanged`
+        // 总开关在这条采集入口上再查一次（BUG.md L-1468）：入口 `onClipboardChanged`
         // 是采集的第一刻查的，而首次读不到时它安排了一次 250ms 重试 —— 用户在这段窗口里关掉开关，
         // 重试仍会把系统剪贴板的内容落库一条。图片路径早就在入口自查（见下 imageCaptureEnabled）。
         if (!ClipboardPrefs.of(appContext).enabled) return

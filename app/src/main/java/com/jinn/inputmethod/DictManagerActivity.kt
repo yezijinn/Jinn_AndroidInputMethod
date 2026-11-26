@@ -1111,7 +1111,7 @@ class DictManagerActivity : Activity() {
         /**
          * 「已安排重启」窗口（2026-10-04，L-801）：[restartImeForDict] 延迟 1.5s 才 SIGKILL，
          * 而这段时间里 `activeDownload` 已是 null、按钮又是「可点」态 ⇒ 用户能再发起一次下载或删除，
-         * 写到一半被随后的 kill 打断（还会叠加 L-798 的残留），而他刚看到 Toast「输入法将重启以加载」。
+         * 写到一半被随后的 kill 打断（还会叠加 L-798 的残留），而用户刚看到操作成功的回执。
          * 置位后所有会改 `dicts/` 的入口一律拒绝，直到进程真的结束（本进程内的窗口，无需持久化）。
          */
         @Volatile

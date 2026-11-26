@@ -821,7 +821,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      *    （BUG.md L-194）。
      *
      * [suffix] 要防文件名与命令两条路：
-     *  - 文件名：`File(dir, "$PREFIX$suffix.log")` 里带上 `../` 就能把写入引到日志目录之外；
+     *  - 文件名：`File(dir, "$LOGCAT_FILE_PREFIX$suffix.log")` 里带上 `../` 就能把写入引到日志目录之外；
      *  - 命令：原实现把整个目标路径拼进 `sh -c "logcat … > '…'"`，一个单引号即可改写命令。
      * 前者用字符白名单过滤，后者改为不经 shell 的 [ProcessBuilder] + redirectOutput，
      * 这样连白名单漏掉的字符也不可能被解释成命令。
