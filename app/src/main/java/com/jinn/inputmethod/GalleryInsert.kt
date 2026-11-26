@@ -15,7 +15,7 @@ import java.io.File
  * 职责：托管「选图 → 复制进私有 cache → 待插入」的桥，以及在 IME 有 `InputConnection` 时执行插入。
  * 入口显隐由 `JinnIme` 按宿主声明决定（见 [canHostAccept]）。
  *
- * 真机实测约束（2026-10-07，微信 / Telegram / 豆包 / Grok 验证通过）：
+ * 插入约束（2026-10-07）：微信 / Telegram / 豆包 / Grok 均已验证。
  * - 图片必须先复制进应用私有目录：Photo Picker 的 URI 只能授权给本应用，
  *   转授不了宿主（授权方是 MediaProvider），只有自家 FileProvider 的 URI 才能 grant 给宿主；
  * - `commitContent` **必须**带 [InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION]：
@@ -463,7 +463,10 @@ internal object GalleryInsert {
         }
     }
 
-    /** 读文件头供 [sniffImageMime] 用（读不到给空数组，嗅探自然走兜底） */
+    /**
+     * 读文件头供嗅探用（[sniffImageMime] / [looksLikeNonImage] / `ClipboardImageCodec.sniffMimeOrNull`）。
+     * 读不到给空数组，嗅探自然走兜底。
+     */
     private fun readHead(file: File): ByteArray = runCatching {
         val head = ByteArray(12)
         var filled = 0

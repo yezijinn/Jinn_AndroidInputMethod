@@ -755,7 +755,7 @@ internal data class AliSentence(
 /**
  * 文本累积器（纯逻辑，JVM 单测直接跑）。
  *
- * 规则只有两条，但**不能合成一条**：
+ * 规则只有三条，但**不能合成一条**：
  *  - `sentence_end=true` ⇒ 整句已定，**追加**到全文；
  *  - `sentence_end=false` ⇒ 只是当前句的预览，**覆盖**当前句（同一句会被服务端反复下发）；
  *  - `heartbeat=true` ⇒ 保活帧，既不带文本也不该动状态。

@@ -71,10 +71,10 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
      */
     private var favoritesOnly = false
 
-    /** 当前是否只看收藏的图片（宿主据此显示「看全部」的出口提示） */
+    /** 当前是否只看收藏的图片（取自 [show] 的入参 [favoritesOnly]） */
     val isFavoritesOnly: Boolean get() = favoritesOnly
 
-    /** 当前是否有图（面板据此选空态文案） */
+    /** 当前是否有图（取自 [items] 是否为空） */
     val isEmpty: Boolean get() = items.isEmpty()
 
     /**

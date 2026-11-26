@@ -20,8 +20,8 @@ import java.util.Locale
  * 不持有目录布局知识（文件名委托 [ClipboardImageFiles.stem] 与 [GalleryInsert.extOf]）。
  *
  * 权限口径（minSdk 26）：
- *  - 单张「保存到相册」走 `MediaStore` + `RELATIVE_PATH`，**API 29+ 免权限**；26–28 需
- *    `WRITE_EXTERNAL_STORAGE`，本应用不申请 ⇒ [albumAvailable] 为 false 时界面不提供「保存」；
+ *  - 单张「保存到相册」走 `MediaStore.Images` + `RELATIVE_PATH`，**API 29+ 免权限**；26–28 不可写
+ *    （本应用未声明 `WRITE_EXTERNAL_STORAGE`）⇒ [albumAvailable] 为 false 时界面不提供「保存」；
  *  - 一切**写用户目录**的动作都走 SAF 目录树（「转移到图库目录」用 `Prefs.galleryTreeUri`，
  *    「导出全部图片」用 `Prefs.clipExportTreeUri`），两者共用 [writeToTree]，全 API 级别可用；
  *    未绑定 / 授权失效归 [MoveResult.NeedBinding] / [MoveResult.Denied]，**绝不删历史**
