@@ -22,7 +22,7 @@ import java.util.Locale
  * 权限口径（minSdk 26）：
  *  - 单张「保存到相册」走 `MediaStore.Images` + `RELATIVE_PATH`，**API 29+ 免权限**；26–28 不可写
  *    （本应用未声明 `WRITE_EXTERNAL_STORAGE`）⇒ [albumAvailable] 为 false 时界面不提供「保存」；
- *  - 一切**写用户目录**的动作都走 SAF 目录树（「转移到图库目录」用 `Prefs.galleryTreeUri`，
+ *  - 一切写用户目录的动作都走 SAF 目录树（「转移到图库目录」用 `Prefs.galleryTreeUri`，
  *    「导出全部图片」用 `Prefs.clipExportTreeUri`），两者共用 [writeToTree]，全 API 级别可用；
  *    未绑定 / 授权失效归 [MoveResult.NeedBinding] / [MoveResult.Denied]，**绝不删历史**
  *    （只有写成功才删，见调用方）。
@@ -36,7 +36,7 @@ internal object ClipboardImageExport {
     sealed interface MoveResult {
         object Ok : MoveResult
 
-        /** 未绑定图库目录（或授权已被系统回收） —— 提示去设置里绑定 */
+        /** 未绑定图库目录（偏好里没有有效目录 URI） —— 提示去设置里绑定 */
         object NeedBinding : MoveResult
 
         /**
