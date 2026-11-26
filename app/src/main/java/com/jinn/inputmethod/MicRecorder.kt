@@ -51,7 +51,7 @@ class MicRecorder(
             return false
         }
 
-        // 缓冲区放大一倍，输入法主线程偶发卡顿时不至于丢帧
+        // 缓冲区取 minBuffer 两倍与 4 包下限（12800 字节）的较大者，主线程偶发卡顿时不至于丢帧
         val bufferSize = maxOf(minBuffer * 2, CHUNK_SAMPLES * BYTES_PER_SHORT * 4)
         val audioRecord = try {
             AudioRecord(

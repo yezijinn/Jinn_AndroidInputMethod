@@ -106,7 +106,7 @@ internal class ReceivingEditText(context: Context, attrs: AttributeSet?) : EditT
         //
         // 用**区间追加**而不是整段重建（BUG.md L-1099）：`setText` 会替换掉整份文本，顺带清掉
         // 输入法的组合态 —— 用户正在拼音未上屏时贴图，组合串会丢、而 IME 仍按旧光标偏移处理后续提交。
-        // 追加只动尾部这一段，连接状态原样保留；追加前先让组合区收尾，免得图被算进组合串里。
+        // 追加只动尾部这一段，连接状态原样保留；追加前先摘掉组合 span（`removeComposingSpans`），免得图被算进组合串。
         val editable = getText() as? Editable
         if (editable != null) {
             BaseInputConnection.removeComposingSpans(editable)
