@@ -249,7 +249,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         set(value) { field = value; layerEpoch++ }
     private var layerEpoch = 0L
 
-    /** 当前输入方案（全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加），来自设置 */
+    /** 当前输入方案（全拼 / 自然码 / 小鹤 / 搜狗 / 微软 / 紫光 / ABC / 加加 / 首道），来自设置 */
     private var scheme: ShuangpinScheme = ShuangpinScheme.QUANPIN
 
     /** 是否双拼方案（派生值：键位/提示/文案都由 [scheme] 决定） */

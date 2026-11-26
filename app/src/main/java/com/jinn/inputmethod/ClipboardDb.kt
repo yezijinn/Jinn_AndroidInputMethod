@@ -11,7 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * 一页的密文串会同时驻留内存（base64 ≈ 明文的 4/3，再加解出的明文串，实测合计 2.33 倍），
  * 峰值按 [ClipboardStore.decryptWindowPeakBytes] 估算：50 条 ≈ 31.25MB（最坏情形），
  * 在 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（48MB）内，由 `ClipboardLimitsTest` 守卫。
- * 原值 200 条 ≈ 131MB（越界）；同量级的问题后来在**配置备份导出**那条路径上又出现过一次
+ * 原值 200 条 ≈ 125MB（越界）；同量级的问题后来在**配置备份导出**那条路径上又出现过一次
  * （`ConfigBackupManager.CLIP_PAGE` 原值同为 200，已一并压回预算内，见 BUG.md L-102）。
  */
 internal const val RECLASSIFY_PAGE = 50
