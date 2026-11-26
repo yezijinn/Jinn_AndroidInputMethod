@@ -370,7 +370,7 @@ class XfIatClient(
             while (sent < due && sent < MAX_CATCH_UP_FRAMES) {
                 val frame = queue.takeFrame() ?: break
                 if (!current.send(XfIatProtocol.audioFrame(sessionAppId, frame, seq = nextSeq()))) {
-                    // 停拍是刻意的（重排只会往坏连接继续灌音频），但**不能只停拍**（A-729）：
+                    // 停拍是刻意的（重排只会往坏连接继续灌音频），但**不能只停拍**：
                     // 任务还挂在 ONLINE，`sendChunk` 会继续攒到 1.92MB，松手时 `finishTask` 再把
                     // 这一整段当一帧发出去（协议口径 40ms/帧）⇒ 后半句全丢、状态条只剩 code≠0。
                     // 当场作废任务，用户立刻知道是「发送失败」，而不是几十秒后才收到一个莫名错误码。

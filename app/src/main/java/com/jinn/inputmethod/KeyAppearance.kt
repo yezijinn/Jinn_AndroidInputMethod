@@ -24,7 +24,7 @@ import kotlin.math.roundToInt
  */
 object KeyAppearance {
 
-    // ── 按键圆角半径（dp）──────────────────────────────────────
+    // ── 按键圆角半径（dp）──
 
     /** 圆角下界：0 为直角 */
     const val MIN_CORNER_DP = 0f
@@ -43,7 +43,7 @@ object KeyAppearance {
     /** 默认圆角：5dp（2026-09-23 定；此前的 1dp 已被取代） */
     const val DEFAULT_CORNER_DP = 5f
 
-    // ── 按键间隙（dp）──────────────────────────────────────────
+    // ── 按键间隙（dp）──
 
     /** 间隙下界：0 为无缝 */
     const val MIN_GAP_DP = 0f
@@ -69,7 +69,7 @@ object KeyAppearance {
     /** SeekBar 最大进度（间隙：见 [MIN_GAP_DP]~[MAX_GAP_DP]，步进 [GAP_STEP_DP]） */
     val GAP_PROGRESS_MAX: Int = progressSteps(MIN_GAP_DP, MAX_GAP_DP, GAP_STEP_DP)
 
-    // ── 按键高度（dp）──────────────────────────────────────────
+    // ── 按键高度（dp）──
 
     /**
      * 三行字母键的**单行高度**（26 键区 28 个键同高：10 + 9 + 9）。
@@ -117,12 +117,12 @@ object KeyAppearance {
     fun keyHeightProgressToDp(progress: Int): Float =
         clampKeyHeightDp(MIN_KEY_HEIGHT_DP + progress.coerceIn(0, KEY_HEIGHT_PROGRESS_MAX) * KEY_HEIGHT_STEP_DP)
 
-    // ── 候选栏字距（dp）────────────────────────────────────────
+    // ── 候选栏字距（dp）──
 
     /**
      * 候选词之间的**水平间隔**（2026-10-02 定：只调水平方向，垂直行高不动）。
      *
-     * 语义与「按键间隙」一致：[DEFAULT_SPACING_DP] 指的是**相邻两个候选之间**的空隙 ——
+     * 语义与「按键间隙」一致：[DEFAULT_SPACING_DP] 指的是相邻两个候选之间的空隙 ——
      * 实现上每个候选左右各内缩「字距的一半」，两个相邻候选的内缩相加正好等于字距。
      */
     const val MIN_SPACING_DP = 5f

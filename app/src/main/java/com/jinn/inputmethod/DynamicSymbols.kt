@@ -29,7 +29,7 @@ object DynamicSymbols {
      * **必须显式锁 Locale**（BUG.md L-119）：`ofPattern(String)` 会带上
      * `Locale.getDefault(Locale.Category.FORMAT)` 的 `DecimalStyle` —— 也就是「数字是不是 ASCII」
      * 取决于**平台数据**（桌面 JVM 走 CLDR、Android 走 ICU，同一 locale 的口径并不保证一致）。
-     * 这些符号是**直接上屏给用户的正文**，不能把它的字节形态交给设备默认值决定 ⇒ 统一锁 [Locale.US]
+     * 这些符号是直接上屏给用户的正文，不能把它的字节形态交给设备默认值决定 ⇒ 统一锁 [Locale.US]
      * （数字恒为 ASCII、历法恒为公历），与本仓其它 12 处格式化（Diagnostics / ConfigBackup /
      * UserFrequency / SettingsActivity …）口径一致。
      *

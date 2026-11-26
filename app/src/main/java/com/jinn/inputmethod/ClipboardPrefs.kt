@@ -237,7 +237,7 @@ class ClipboardPrefs(context: Context) {
     fun effectiveMaxItemBytes(): Long = ClipboardStore.effectiveItemLimitBytes(maxItemBytesKb * 1024L)
 
     /**
-     * 分组标签是否已按多标签规则重算过（2026-09-25 起；**运行态标记，不进备份**）。
+     * 分组标签是否已按多标签规则重算过（2026-09-25 起；运行态标记，不进备份）。
      *
      * 重算本身幂等，但全库解密有成本，用标记保证只跑一次；失败不置位，下次启动自动重试。
      */
@@ -314,7 +314,7 @@ class ClipboardPrefs(context: Context) {
         val out = LinkedHashMap<String, ConfigBackup.BackupValue>()
         // ⚠ `enabled` **不进备份**（2026-10-03 修复 L-751；2026-10-06 复核仍成立）：
         // 它自 2026-10-06 起已是「剪贴板自定义」页里的用户开关（不再是强制 true 的产品不变量），
-        // 但导出侧照样不写回 —— 「覆盖还原」一份带 `enabled=false` 的包会**静默停止剪贴板采集**，
+        // 但导出侧照样不写回 —— 「覆盖还原」一份带 `enabled=false` 的包会静默停止剪贴板采集，
         // 导入摘要与完成提示都不提它，且该状态会在包与本机之间自我传播。
         // 与 [KEY_RECLASSIFIED] 同类：跨机迁移时开关该不该跟着走尚未定论，先不随包走。
         ConfigBackup.BackupValue.of(maxItems)?.let { out[KEY_MAX_ITEMS] = it }
@@ -453,7 +453,7 @@ class ClipboardPrefs(context: Context) {
         /**
          * 单条上限（KB）的定义域：下界 / 步进 / 上界（自定义页滑杆直接引用这三个常量）。
          *
-         * 上界 260 = 滑杆网格（4 + 4k）上**不超过解密窗天花板**的最后一个值：天花板
+         * 上界 260 = 滑杆网格（4 + 4k）上不超过解密窗天花板的最后一个值：天花板
          * 268,435B ≈ 262KB 是 `48MB / 2.5 / 75` 反推的硬上限，滑杆再往上就是「设了不生效」
          * 的值（旧上界 1024KB 拖到头实际只到 262KB，BUG.md L-1514）。
          *

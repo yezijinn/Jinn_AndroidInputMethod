@@ -82,7 +82,7 @@ object ClipboardClassifier {
         }
     }
 
-    // ── 片段提取（分组展示与粘贴用）────────────────────────
+    // ── 片段提取（分组展示与粘贴用） ──
 
     /** 提取最先出现的网址片段；没有返回 null */
     fun firstUrl(text: String): String? = earliest(text, URL_RULES)
@@ -176,7 +176,7 @@ object ClipboardClassifier {
     const val SEGMENT_MAX_CHARS = 4000
 
     /**
-     * 把全文切成每段 ≤ [SEGMENT_MAX_CHARS] 字符的分段，**拼接起来与原文一字不差**（内容不丢、不改）。
+     * 把全文切成每段 ≤ [SEGMENT_MAX_CHARS] 字符的分段，拼接起来与原文一字不差（内容不丢、不改）。
      *
      * 断点策略：优先落在换行符之后（多行文本 → 段落边界对齐，不会把一行劈成两行）；
      * 一整段都没有换行时（单行巨串）才硬切。这也是「单行 250KB」唯一可能的切法。
@@ -254,7 +254,7 @@ object ClipboardClassifier {
         return best
     }
 
-    // ── 网址 ──────────────────────────────────────────────
+    // ── 网址 ──
 
     /**
      * 网址正文允许的字符（RFC 3986 的 unreserved + reserved + 百分号）。
@@ -315,7 +315,7 @@ object ClipboardClassifier {
 
     private const val TRAILING_PUNCT = "。，、；：！？…（）【】《》「」『』“”‘’,;:!?)]}>\"'."
 
-    // ── 数字 ──────────────────────────────────────────────
+    // ── 数字 ──
 
     private val AMOUNT_PATTERN = Pattern.compile(
         "[¥￥$€]\\s*\\d+(?:\\.\\d{1,2})?"                   // 金额

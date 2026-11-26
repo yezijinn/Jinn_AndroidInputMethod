@@ -334,8 +334,8 @@ private const val LOG_SEGMENTS_KEPT = 2
      *
      * 必须用 `java.time` 而不是 `SimpleDateFormat`：后者非线程安全，而本类的
      * 日志格式化在 `log()` 里是锁外执行的（锁只保护文件追加），采集线程、
-     * BackgroundIo 线程、下载线程与主线程会同时进来，共用实例会互相踩状态
-     * ，表现为时间戳串号/乱码，极端情况在 `format()` 内部抛异常，把业务路径一起带崩。
+     * BackgroundIo 线程、下载线程与主线程会同时进来，共用实例会互相踩状态，
+     * 表现为时间戳串号/乱码，极端情况在 `format()` 内部抛异常，把业务路径一起带崩。
      * `DateTimeFormatter` 不可变、天然线程安全（minSdk 26 已支持 java.time）。
      */
     private val dateFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)

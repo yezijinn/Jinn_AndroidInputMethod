@@ -13,7 +13,7 @@ import org.json.JSONObject
  * （Cloudflare **Workers AI** 的 `/ai/run/@cf/…` 是另一套路径，不在本实现覆盖范围内）：
  * 填 Base URL + API Key + 模型名即可用。
  *
- * **与实时流式的几个实现（[AsrClient] / [XfIatClient] / [AliAsrClient]）的根本差别是传输模型**：
+ * 与实时流式的几个实现（[AsrClient] / [XfIatClient] / [AliAsrClient]）的根本差别是传输模型：
  * 没有长连接，服务端也不收流式音频，所以先**本地缓冲**整段音频，[endTask] 时一次性组 WAV 上传，
  * 拿回最终文本就结束。缓冲 / 线程 / 取消 / 超时那套在基类 [BufferedBatchAsrClient] 里，
  * 本类只负责「怎么校验配置」与「怎么发一次请求、怎么解析回包」。

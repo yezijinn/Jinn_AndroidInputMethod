@@ -346,7 +346,7 @@ class JinnIme : InputMethodService() {
     private var voiceResultPackage: String? = null
 
     /**
-     * 状态条上一次写下的**失败原因**（A-734）。
+     * 状态条上一次写下的**失败原因**。
      *
      * `SpeechClient` 只对外暴露 `state`，不保存 `detail`；而 `onStartInputView` 每次聚焦都用
      * `renderLink(state, null)` 重绘（[renderLink]）。没有这一份，401 / 超时 / 服务端 `code≠0`
@@ -354,7 +354,7 @@ class JinnIme : InputMethodService() {
      */
     private var lastLinkDetail: String? = null
 
-    /** 上一次画到状态灯上的颜色资源：同值不重设 `backgroundTintList`（A-738，省一次新建与重绘） */
+    /** 上一次画到状态灯上的颜色资源：同值不重设 `backgroundTintList`（省一次新建与重绘） */
     private var lastStatusColor: Int = 0
 
     /**
@@ -1613,7 +1613,7 @@ class JinnIme : InputMethodService() {
                     GalleryInsert.InsertResult.FileMissing -> toast(TEXT_IMAGE_UNAVAILABLE)
                     GalleryInsert.InsertResult.NoConnection -> Diagnostics.w(TAG, "粘贴图片: 无输入连接")
                     GalleryInsert.InsertResult.UriFailed -> {
-                        // 与 Rejected 同等待遇（A-190）：拆出本态是为了把「本地构造失败」
+                        // 与 Rejected 同等待遇：拆出本态是为了把「本地构造失败」
                         // 与「宿主拒收」分开留痕，不是要取消兜底 —— fallbackToClipboard 会经
                         // stageForInsert 重新落一份文件再取 URI，路径类失败本可成功。
                         Diagnostics.w(TAG, "粘贴图片: URI 构造失败，退回剪贴板")
@@ -1643,7 +1643,7 @@ class JinnIme : InputMethodService() {
         // 写盘必须在后台：`copyToSystemClipboard` → `GalleryInsert.stageForInsert` 会把整张原图
         // （≤20MB）落进 cache 并顺带裁剪目录。两条调用来源（宿主拒收 / URI 构造失败）都在 `ui.post`
         // 里，同步做就是主线程 IO；搬进长活池后它也回到与选图/点图同一条串行线程，裁剪不再乱序。
-        // 但「替宿主粘贴」用的是投递时刻的输入框（A-722）：写盘期间用户可能已经切走，
+        // 但「替宿主粘贴」用的是投递时刻的输入框：写盘期间用户可能已经切走，
         // 回来时 currentInputConnection 指向别的框，这一下就把图粘进不相干的地方（同类：L-1005）。
         val fieldKey = GalleryInsert.galleryFieldKeyOf(currentInputEditorInfo)
         BackgroundIo.runLong {
@@ -5905,7 +5905,7 @@ class JinnIme : InputMethodService() {
 
     private fun renderLink(state: LinkState, detail: String?) {
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "renderLink: state=$state detail=$detail mode=$mode")
-        // 失败原因留住（A-734）：聚焦重绘传的是 detail=null，丢了就只剩「未连接」
+        // 失败原因留住：聚焦重绘传的是 detail=null，丢了就只剩「未连接」
         if (state == LinkState.ONLINE || state == LinkState.CONNECTING) {
             lastLinkDetail = null
         } else if (detail != null) {
@@ -5955,7 +5955,7 @@ class JinnIme : InputMethodService() {
                 }
             }
         }
-        // 同值不重设（A-738）：聚焦 / 换框时本方法每次都跑，而 tint 每次 new 一个 ColorStateList、
+        // 同值不重设：聚焦 / 换框时本方法每次都跑，而 tint 每次 new 一个 ColorStateList、
         // text 同值赋值也会走一遍 setText。视图重建后 statusDot 是新实例（tint 为 null）⇒ 会重设。
         if (lastStatusColor != colorRes || statusDot?.backgroundTintList == null) {
             statusDot?.backgroundTintList = ColorStateList.valueOf((keyboardThemeCtx ?: this).getColor(colorRes))
@@ -6317,7 +6317,7 @@ class JinnIme : InputMethodService() {
         /**
          * 剪贴板采集开关改动后调用（主线程）：立刻按新开关启停采集器。
          *
-         * 为什么不再走广播（A-572）：旧实现是「自定义页 `sendBroadcast` + 本服务在 Android 13+
+         * 为什么不再走广播：旧实现是「自定义页 `sendBroadcast` + 本服务在 Android 13+
          * 注册接收方」。低版本没有 `RECEIVER_NOT_EXPORTED` 标志（动态注册默认导出且无权限保护），
          * 于是干脆不注册 —— 而发送方**无条件发送**，结果 Android 8~12 上这条通知整个落空：
          * 用户把「剪贴板历史」关掉并保存后，采集器仍在跑、仍把复制内容入库，直到下次弹键盘

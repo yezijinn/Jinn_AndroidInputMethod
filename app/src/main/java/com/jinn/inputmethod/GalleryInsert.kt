@@ -16,7 +16,7 @@ import java.io.File
  * 入口显隐由 `JinnIme` 按宿主声明决定（见 [canHostAccept]）。
  *
  * 真机实测约束（2026-10-07，微信 / Telegram / 豆包 / Grok 验证通过）：
- * - 图片**必须先复制进应用私有目录**：Photo Picker 的 URI 只能授权给本应用，
+ * - 图片必须先复制进应用私有目录：Photo Picker 的 URI 只能授权给本应用，
  *   转授不了宿主（授权方是 MediaProvider），只有自家 FileProvider 的 URI 才能 grant 给宿主；
  * - `commitContent` **必须**带 [InputConnection.INPUT_CONTENT_GRANT_READ_URI_PERMISSION]：
  *   缺了它微信会「假成功」—— 返回 true 却把 `content://` 当纯文本贴进输入框（实测踩到过）；
@@ -66,7 +66,7 @@ internal object GalleryInsert {
     private var effectiveCacheBytes = MAX_CACHE_BYTES
 
     /**
-     * 落定生效的缓存预算（低内存档折半），**每个入档入口都要调**。
+     * 落定生效的缓存预算（低内存档折半），每个入档入口都要调。
      *
      * 入档路径有两条：[copyToCache]（选图页）与 [stageForInsert]（剪贴板图片的两个出库路径）。
      * 只在选图那条落定时，从不用选图、只从剪贴板贴图的设备会一直按基准 60MB 裁剪 ——
@@ -190,7 +190,7 @@ internal object GalleryInsert {
      *
      * 张数保护是位置式的（「最近 N 位」），队内那张一旦被更晚的非入队落盘挤到后面就失效 ——
      * 剪贴板历史页的「复制」、面板点图、兜底通道都会往同一目录写新文件却**不入队**。
-     * 按身份豁免才是「队内文件绝不被字节清理删掉」这条不变量的正确表达（A-721）。
+     * 按身份豁免才是「队内文件绝不被字节清理删掉」这条不变量的正确表达。
      */
     private fun pendingNames(): Set<String> = synchronized(pendingLock) {
         pending.mapTo(HashSet(pending.size)) { it.picked.file.name }
@@ -532,7 +532,7 @@ internal object GalleryInsert {
      *
      * 入参按**最近使用在前**排序。最新 [protectRecent] 张无条件保留 —— 宿主读取是异步的，
      * 刚提交与上一次提交的都可能仍在被重读，删掉在界面上表现为「发出去的图裂了」（L-1003）；
-     * [mustKeep] 里的文件名按**身份**无条件保留（队内待插入队列，A-721）：位置保护只看「最近几位」，
+     * [mustKeep] 里的文件名按**身份**无条件保留（队内待插入队列）：位置保护只看「最近几位」，
      * 而队列里的文件可能被更晚的非入队落盘挤到后面，那时只有身份能救它。
      * 其余按「保留 [keepFiles] 张 + 保留集总字节不超过 [maxBytes]」淘汰，超出即删最旧。
      */

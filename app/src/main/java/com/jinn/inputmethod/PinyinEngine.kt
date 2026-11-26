@@ -2226,7 +2226,7 @@ object PinyinEngine {
         // 每个候选来自几个音节（用于最后「同音节数优先」分组）：长键先入，故先登记者即最长键
         val syllableCounts = HashMap<String, Int>(cap * 4 / 3 + 1)
         for (k in syllables.size downTo 1) {
-            val key = keyBuf.toString()     // 本轮前缀快照（Map / 二分查找要用真 String）
+            val key = keyBuf.toString()     // 本次前缀快照（Map / 二分查找要用真 String）
             keyBuf.setLength(keyBuf.length - syllables[k - 1].length)   // 削掉本级：下一轮即更短的前缀
             for (k2 in phraseKeysOf(key)) {
                 phrasesFor(k2)?.let { found ->

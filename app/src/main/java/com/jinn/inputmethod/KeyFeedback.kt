@@ -60,7 +60,7 @@ internal object KeyFeedback {
     private var hasAmplitudeControl = false
     private var audioManager: AudioManager? = null
 
-    // ── 用户意愿（来自 Prefs，[refresh] 写入）────────────────────
+    // ── 用户意愿（来自 Prefs，[refresh] 写入） ──
     private var soundEnabled = false
     private var vibrateEnabled = false
     private var volume = TapSound.VOLUME_DEFAULT / 100f
@@ -68,7 +68,7 @@ internal object KeyFeedback {
     private var vibrationTier = TapSound.VIB_DEFAULT
     private var map: IntArray = TapSound.DEFAULT_MAP.copyOf()
 
-    // ── 系统闸门（缓存，不在按键路径上查 IPC）──────────────────
+    // ── 系统闸门（缓存，不在按键路径上查 IPC） ──
     private var systemSoundAllowed = true
     private var systemHapticAllowed = true
 
@@ -179,7 +179,7 @@ internal object KeyFeedback {
     /** 震动的两道闸门是否全开：用户开关 + 系统「触摸时振动」 */
     fun vibrateGatesOpen(): Boolean = vibrateEnabled && systemHapticAllowed
 
-    // ── 音效 ─────────────────────────────────────────────────
+    // ── 音效 ──
 
     private fun buildPool(): SoundPool =
         SoundPool.Builder()
@@ -236,7 +236,7 @@ internal object KeyFeedback {
     /** 响铃模式放行：默认跟随系统（静音 / 仅震动都不出声），用户可显式覆盖 */
     private fun ringerAllows(): Boolean = soundOnSilent || ringerNormal
 
-    // ── 震动 ─────────────────────────────────────────────────
+    // ── 震动 ──
 
     private fun vibrate(group: Int) {
         val vib = vibrator ?: return

@@ -22,7 +22,7 @@ import android.widget.TextView
 /**
  * 敲击音效反馈页：从设置页「敲击音效反馈」按钮进入。
  *
- * 与模糊音 / 生僻字两页同一套骨架：**改动即落盘并即时生效**（[JinnIme.onKeyFeedbackChanged]），
+ * 与模糊音 / 生僻字两页同一套骨架：改动即落盘并即时生效（[JinnIme.onKeyFeedbackChanged]），
  * 不设「保存」按钮；每次回前台都重画（[onStart]），避免与设置页 / 备份导入后的值不一致。
  *
  * 定义域、默认值与解析钳位全部在 [TapSound]（纯 JVM，可单测），本页只负责展示与写盘。
@@ -98,11 +98,11 @@ class TapSoundActivity : Activity() {
         super.onDestroy()
     }
 
-    // ── 渲染 ─────────────────────────────────────────────────
+    // ── 渲染 ──
 
     /** 三张卡片：音效 / 震动 / 分组音色 */
     private fun renderAll() {
-        // ⚠ 必须先刷再渲染，且**两道闸门都在这里刷**：试听的可用态读的是 [KeyFeedback] 的静态
+        // ⚠ 必须先刷再渲染，且两道闸门都在这里刷：试听的可用态读的是 [KeyFeedback] 的静态
         // 缓存，写它的只有这两个入口 —— 用户意愿走 `refresh(prefs)`，系统闸门（触摸提示音 /
         // 响铃模式）走 `refreshSystemGates`。两条都放进来之后，「先刷再渲染」由结构保证，
         // 不再靠调用方记得：原先系统闸门只有 `onStart` 刷一次，页内每一次重画（拨开关、选完
@@ -220,7 +220,7 @@ class TapSoundActivity : Activity() {
 
     /**
      * 强度行：标签（左）+ 拖动条（中）+ 数值（右，强调色）。规格照键盘外观页的滑杆行，
-     * 区别只在**松手时补一次试听** —— 强度是听觉量，不试听等于盲调。
+     * 区别只在松手时补一次试听 —— 强度是听觉量，不试听等于盲调。
      */
     private fun makeVolumeRow(): LinearLayout {
         val value = TextView(this).apply {
@@ -418,7 +418,7 @@ class TapSoundActivity : Activity() {
         dialog.show()
     }
 
-    // ── 试听 ─────────────────────────────────────────────────
+    // ── 试听 ──
 
     /**
      * 本页自建的试听 SoundPool：不复用 [KeyFeedback] —— 后者是 IME 进程内的单例，

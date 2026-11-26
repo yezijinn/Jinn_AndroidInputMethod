@@ -672,7 +672,7 @@ class CustomDictEditActivity : Activity() {
             .show()
     }
 
-    // ── 载入 / 保存 ──────────────────────────────────────────
+    // ── 载入 / 保存 ──
 
     /**
      * 回显源文本（与「导入 .txt」共享同一份）。
@@ -858,7 +858,7 @@ class CustomDictEditActivity : Activity() {
                     finish()
                 } else {
                     // 包没写成但源文本已被本次保存改写（WRITE_FAIL_PACK）：身份戳要跟着更新，
-                    // 否则提示里承诺的「再点一次保存」会被自己刚写的新源文本触发覆盖确认（A-763）。
+                    // 否则提示里承诺的「再点一次保存」会被自己刚写的新源文本触发覆盖确认。
                     if (status == TEXT_WRITE_FAIL_PACK) {
                         loadedSourceStamp = CustomDicts.sourceStamp(CustomDicts.sourceFile(this@CustomDictEditActivity))
                         sourceStampTrusted = true
@@ -872,7 +872,7 @@ class CustomDictEditActivity : Activity() {
     /** 词库目录（包与源文本都在这里；与词库页、备份侧同一处 `filesDir/dicts`） */
     private fun dictDir(): File = File(filesDir, PinyinEngine.OPT_DICT_DIR)
 
-    // ── 版面 ────────────────────────────────────────────────
+    // ── 版面 ──
 
     /**
      * 顶栏：左标题、右「保存」+ 关闭（与词库页同款 card_bg 底色，夜间为 #141C33 深蓝）。

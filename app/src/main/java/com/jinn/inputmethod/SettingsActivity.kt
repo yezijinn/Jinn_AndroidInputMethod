@@ -642,7 +642,7 @@ class SettingsActivity : ComponentActivity() {
     private var checkSeq = 0
 
     /**
-     * 更新检查结果在页面**退到后台但尚未销毁**时到达：挂起到 [onResume] 再呈现。
+     * 更新检查结果在页面退到后台但尚未销毁时到达：挂起到 [onResume] 再呈现。
      *
      * L-1047 只堵了「已销毁」面；结果在 onStop 期间回来时 Activity 的 window 被隐藏，
      * `showAskUpdateDialog` 弹的是用户看不见的框，而 `recordUpdateCheckTime` 已吃掉 7 天节流；
@@ -899,7 +899,7 @@ class SettingsActivity : ComponentActivity() {
 
     private fun refreshTranslateState() {
         val provider = TranslationProviderId.of(prefs.translateProvider)
-        // 注意：用「不可用成因」而不是 `translationProvider() != null`（2026-10-03 修复 L-815）：
+        // 注意：用「不可用成因」而不是 `translationProvider() != null`（2026-10-03，L-815）：
         // ① `null` 不再区分「没填凭据」与「端点不是 https」，摘要必须分因，否则 http 端点用户
         //    会去反复检查已经填好的 Key 与模型名；② 顺带**省掉一次 provider 组装**（那会解密凭据）。
         val reason = prefs.translateNotReadyReason()
@@ -920,7 +920,7 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 
-    // ── 保存并重启输入法进程 ──────────────────────────────────────────
+    // ── 保存并重启输入法进程 ──
 
     /**
      * 保存并重启输入法进程。
@@ -966,7 +966,7 @@ class SettingsActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    // ── 配置备份：导出 / 导入 ────────────────────────────────
+    // ── 配置备份：导出 / 导入 ──
 
     /**
      * 导出前的选项对话框：剪贴板明文默认不勾（隐私），词库默认勾（换省事），
@@ -1190,7 +1190,7 @@ class SettingsActivity : ComponentActivity() {
     }
 
     /**
-     * 给**含密码输入框**的对话框加防截屏 / 录屏 / 投屏 / 最近任务缩略图标志（2026-10-04 修复 L-588）。
+     * 给**含密码输入框**的对话框加防截屏 / 录屏 / 投屏 / 最近任务缩略图标志（2026-10-04，L-588）。
      *
      * 为什么加在对话框窗口、而不是整个设置页：`FLAG_SECURE` 是**按窗口**生效的，而本页只有
      * 「导出配置 / 导入配置」两个密码框是机密（其余是 host / port、提示词这类非机密配置）。
@@ -1360,8 +1360,8 @@ class SettingsActivity : ComponentActivity() {
                 .append(info.clipCount).append(" 条、词库 ")
                 .append(info.dictNames.size).append(" 个")
             // 端点类设置也在「设置项」里（语音服务地址、OpenAI 兼容 Base URL / Chat Path 等）：
-            // 「覆盖还原」会用包里的值覆盖本机，而翻译请求会把**本机已有的凭据与光标前的正文**发往
-            // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30 审查）。
+            // 「覆盖还原」会用包里的值覆盖本机，而翻译请求会把本机已有的凭据与光标前的正文发往
+            // 那个地址 —— 包若来自不可信来源，等于把 Key 交出去（2026-09-30）。
             // 这里明说，不让它藏在「设置 N 项」这个计数后面。
             append("\n\n提示：选「覆盖还原」时，包内的服务端地址与自定义端点（语音服务地址、")
             append("OpenAI 兼容 Base URL 等）会覆盖本机 —— 请确认备份来源可信。")

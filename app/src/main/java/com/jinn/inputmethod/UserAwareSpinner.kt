@@ -9,7 +9,7 @@ import android.widget.Spinner
  * 带「用户主动操作过」探针的下拉（Spinner）。
  *
  * 为什么需要它（BUG.md L-821）：设置页的下拉此前用 `setOnTouchListener` 里置位的标记当落盘闸门，
- * 于是**键盘（确认键）与读屏（ACTION_CLICK）选中后不落盘** —— 界面显示新值、配置却没变，
+ * 于是键盘（确认键）与读屏（ACTION_CLICK）选中后不落盘 —— 界面显示新值、配置却没变，
  * 退出重进还静默还原。三条用户路径里只有触摸会产生 MotionEvent：
  *
  *  - `spinnerMode="dropdown"` 的触摸不保证走 `performClick`（长按由 `ForwardingListener` 开弹窗，
@@ -21,7 +21,7 @@ import android.widget.Spinner
  *    ⇒ 探针恰好等于「用户动过它」，导入备份后重建页面的回填不会被误判成用户操作。
  *
  * ⚠ 不许给它设 `OnClickListener`：`Spinner.performClick()` 在 `super.performClick()` 返回 true 时
- * **跳过一次打开下拉**（AOSP 原文 `if (!handled) { … mPopup.show() }`），设了监听器下拉就弹不出来。
+ * 跳过一次打开下拉（AOSP 原文 `if (!handled) { … mPopup.show() }`），设了监听器下拉就弹不出来。
  */
 class UserAwareSpinner @JvmOverloads constructor(
     context: Context,

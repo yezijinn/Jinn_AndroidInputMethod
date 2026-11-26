@@ -19,7 +19,7 @@ import android.widget.Toast
 /**
  * 剪贴板自定义页：从设置页「敲击音效反馈」同行右侧的「剪贴板自定义」进入。
  *
- * 交互模型：**默认锁定只读 → 解锁才可调 → 改动进草稿 → 点「保存」才落盘**。
+ * 交互模型：默认锁定只读 → 解锁才可调 → 改动进草稿 → 点「保存」才落盘。
  *  - 「解锁参数」开关：**会话级、不落盘**（每次进入都从锁定态开始，防误触最彻底）；
  *  - 总开关与全部参数**都走草稿**（[draft] 是渲染唯一真源，`prefs` 只在建快照 / 保存 / 裁剪时读）；
  *  - 「重置」= 丢弃草稿回到 [snapshot]（进入页面时建、每次回前台按盘上值刷新；不写盘、不触发裁剪）；
@@ -122,7 +122,7 @@ class ClipboardCustomizeActivity : Activity() {
     override fun onStart() {
         super.onStart()
         themeTicker.start()
-        // 回前台时重读盘上值，**只同步「本页没动过」的键**（L-1106）：
+        // 回前台时重读盘上值，只同步「本页没动过」的键（L-1106）：
         // 本页是「草稿 + 保存」模型，但 `galleryColumns` / `galleryCellHeightDp` 这两个布局键还有
         // 另外两个写方（历史页网格、键盘面板「布局」键）都是**即时落盘**。于是：用户先在别处改了
         // 布局 → 回到本页（Activity 未重建，草稿仍是旧值）→ 改别的项并保存 ⇒ 布局被静默写回旧值。
@@ -166,7 +166,7 @@ class ClipboardCustomizeActivity : Activity() {
         tryFinish()
     }
 
-    // ── 数据 ────────────────────────────────────────────────
+    // ── 数据 ──
 
     /**
      * 盘上取值 → 页面草稿。
@@ -198,7 +198,7 @@ class ClipboardCustomizeActivity : Activity() {
     }
 
     /**
-     * 把盘上**新值**同步进草稿，但**只动「本页没编辑过」的键**（L-1106）。
+     * 把盘上**新值**同步进草稿，但只动「本页没编辑过」的键（L-1106）。
      *
      * 判据：草稿某键仍等于**旧快照**（进入页面时的盘上值）⇒ 按值判没动过 ⇒ 跟随新盘上值；
      * 不等 ⇒ 在本页改过 ⇒ **保留草稿**，绝不覆盖，否则会冲掉还没保存的编辑。
@@ -259,7 +259,7 @@ class ClipboardCustomizeActivity : Activity() {
 
     private fun isDirty(): Boolean = hasUnsavedChanges(draft, snapshot, unlocked)
 
-    // ── 渲染 ────────────────────────────────────────────────
+    // ── 渲染 ──
 
     private fun renderAll() {
         // 重建整页会重置滚动：先记位置，重建后恢复（否则拖卡片 3 的滑块一松手就被弹回顶部）
@@ -461,7 +461,7 @@ class ClipboardCustomizeActivity : Activity() {
     /**
      * 参数区置灰（半透明 + 不可交互）。
      *
-     * ⚠ 置灰范围必须**排除两个开关自身**：把「解锁参数」一起禁掉就是自锁死（打开后再也关不掉）。
+     * ⚠ 置灰范围必须排除两个开关自身：把「解锁参数」一起禁掉就是自锁死（打开后再也关不掉）。
      */
     private fun dim(view: View, editable: Boolean) {
         view.alpha = if (editable) 1f else 0.45f
@@ -550,7 +550,7 @@ class ClipboardCustomizeActivity : Activity() {
         }
     }
 
-    // ── 保存 / 重置 / 离开 ───────────────────────────────────
+    // ── 保存 / 重置 / 离开 ──
 
     private fun confirmSave() {
         if (confirming) return

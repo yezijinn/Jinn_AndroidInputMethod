@@ -21,7 +21,7 @@ import kotlin.random.Random
  *
  * `from=auto` = 自动检测源语言（与 Azure 侧对齐，用户不需要填源语言）。
  *
- * ⚠ 百度把**业务错误码放在 HTTP 200 的响应体里**（`error_code`），必须先看它再看译文，
+ * ⚠ 百度把业务错误码放在 HTTP 200 的响应体里（`error_code`），必须先看它再看译文，
  * 否则「签名错误」会被当成「译文为空」。
  */
 internal class BaiduTranslator(
@@ -37,12 +37,12 @@ internal class BaiduTranslator(
 
     override fun buildRequest(text: String, target: TranslationLanguage): Request {
         val salt = saltSource()
-        // 签名用**未编码原文**（官方要求），发送用**自定义全量百分号编码**：
+        // 签名用**未编码原文**（官方要求），发送用自定义全量百分号编码：
         // `addQueryParameter` 不编码 `+`（OkHttp 的保留集里没有它），而多数网关按
         // form-urlencoded 口径把 query 里的 `+` 解回空格 ⇒ 服务端重建的 q 与签名用的 q
         // 不一致 ⇒ `error_code=54001`（被归成 AUTH，用户怎么检查凭据都没问题）。
         // 全量编码后 `+`→`%2B`、`%`→`%25`、空格→`%20`，服务端解出的 q 必等于原文
-        // （2026-09-30 审查发现）。
+        // （2026-09-30）。
         val sign = md5Hex(appId + text + salt + secretKey)
         val url = ENDPOINT_URL.newBuilder()
             .addEncodedQueryParameter("q", percentEncode(text))
@@ -59,7 +59,7 @@ internal class BaiduTranslator(
         val json = runCatching { JSONObject(body.orEmpty()) }.getOrNull()
         // 业务错误码优先，且**非 2xx 也先取**：百度把频率/额度类错误码（54003/54004/54005）也放在
         // 响应体里，网关用 403/5xx 承载它时若先看状态，就会被归成 AUTH/SERVER、提示「检查凭据」，
-        // 而真实原因是限流/欠费（2026-09-30 审查发现）。
+        // 而真实原因是限流/欠费（2026-09-30）。
         // 走 jsonCode 而不是 jsonText：错误码可能是 JSON 数字（2026-10-01 审查 L-226）
         val errorCode = jsonCode(json, "error_code")
         // `"0"` 是百度的**成功**码：数字兼容之后 `"error_code":0` 也会被取到，不豁免就会把一次
@@ -80,7 +80,7 @@ internal class BaiduTranslator(
         /**
          * 取 `trans_result` 里的译文。
          *
-         * 百度的这个字段是**按输入行对齐的数组** —— 多行原文返回多个元素，只读 `[0]` 会丢掉
+         * 百度的这个字段是按输入行对齐的数组 —— 多行原文返回多个元素，只读 `[0]` 会丢掉
          * 第 2..N 行的译文，而界面仍报成功（2026-10-01 审查 L-268）。这里按顺序用 `\n` 连起来；
          * 服务端不拆行时数组长度恒为 1，行为与原来一致。
          *
@@ -103,7 +103,7 @@ internal class BaiduTranslator(
         const val SOURCE_LANGUAGE_AUTO = "auto"
 
         /**
-         * 重放防护随机数的**非负**化（2026-10-10 修复 L-1130）。
+         * 重放防护随机数的**非负**化（2026-10-10，L-1130）。
          *
          * 官方口径是「随机数字符串」，而 `Random.nextLong()` 是有符号的 —— 约一半概率以 `-` 开头，
          * 不属于该口径（签名侧自洽：`md5(appId + text + salt + secretKey)` 与 query 用同一个串，
@@ -159,7 +159,7 @@ internal class BaiduTranslator(
             400, 413, 414 -> TranslationError.PARAM      // 413 请求体过大、414 URL 过长；本家走 GET
                   // 原文在 query 里，非 ASCII 一字节膨胀成 3 字符，实际撞的是 414。
                   // 原先只认 413（对 GET 不可达），把「原文过长」显示成「服务异常」，
-                  // 按提示重试永远失败（2026-10-01 修复 L-308）
+                  // 按提示重试永远失败（2026-10-01，L-308）
             401, 403 -> TranslationError.AUTH
             408 -> TranslationError.TIMEOUT
             429 -> TranslationError.QUOTA

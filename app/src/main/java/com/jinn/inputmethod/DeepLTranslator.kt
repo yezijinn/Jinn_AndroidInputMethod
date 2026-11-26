@@ -33,7 +33,7 @@ internal class DeepLTranslator(
      *
      * 判 Free/Pro 用 trim 后的 Key、发请求却用未 trim 的原值，会让带空格的 Key 出现
      * 「判成 Free 域、发出的却是不合法 Key」（403→AUTH，用户看不出错在哪一步）。
-     * 生产入口 `providerOf` 已 trim，这里是类自身的自洽性（2026-09-30 审查发现）。
+     * 生产入口 `providerOf` 已 trim，这里是类自身的自洽性（2026-09-30）。
      */
     private val apiKey: String = rawApiKey.trim()
 
@@ -87,7 +87,7 @@ internal class DeepLTranslator(
             400, 413, 414 -> TranslationError.PARAM
             // 401 / 408 官方错误表里没有（DeepL 用 403 表达密钥无效），但前置 CDN / 代理会回它们。
             // 其余五家都认这两个码，只有这家落 else ⇒ 同一家的凭据错在 403 说「认证失败」、
-            // 在 401 却说「服务异常」，用户无从判断该查凭据还是该重试（2026-10-01 修复 L-309）。
+            // 在 401 却说「服务异常」，用户无从判断该查凭据还是该重试（2026-10-01，L-309）。
             401, 403 -> TranslationError.AUTH
             408 -> TranslationError.TIMEOUT
             429, 456 -> TranslationError.QUOTA

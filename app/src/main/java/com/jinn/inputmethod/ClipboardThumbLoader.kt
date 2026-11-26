@@ -39,7 +39,7 @@ internal object ClipboardThumbLoader {
     /**
      * 「这张已在解」时挂在这里的回调，与在解的那次同批投递（BUG.md L-1489 复测实证）。
      *
-     * 丢掉重复请求的旧写法有个坑：后一个消费者永远拿不到图。典型触发是**同一屏在解码期间重排**
+     * 丢掉重复请求的旧写法有个坑：后一个消费者永远拿不到图。典型触发是同一屏在解码期间重排
      * （改列数 / 行高、面板重开、收藏切换都会 `generation++` 重建 cell）：旧 cell 的结果被世代判据
      * 丢弃，新 cell 的请求又被去重挡下 —— 两边的回调都没了，那一格就一直停在空白
      * （真机日志：`@260` 连提两次，1ms 内第二次被去重）。挂在同一个 key 上，一次解码喂所有等待者。
@@ -77,7 +77,7 @@ internal object ClipboardThumbLoader {
      *    缓存 / LRU 档进程（另有 heavy-weight），而 IME 服务活着时最差也只是 perceptible ——
      *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档**结构性不可达**
      *    （`COMPLETE` 留下只为纵深防御：真到那一档时本进程已不在）；
-     * ② `UI_HIDDEN` 是**本应用自己的页面**（设置 / 历史页）离屏，与内存压力无关；按它清等于
+     * ② `UI_HIDDEN` 是本应用自己的页面（设置 / 历史页）离屏，与内存压力无关；按它清等于
      *    每次离开设置页就把键盘面板要用的图清一遍，收益为零。
      */
     internal fun shouldReleaseForTrim(level: Int): Boolean {
@@ -143,7 +143,7 @@ internal object ClipboardThumbLoader {
     /**
      * 系统报内存紧张时把解码位图让出去（BUG.md L-1489）。
      *
-     * 原先这份缓存**没有第二个释放点**：`ClipboardImageGridView.stopWork()` 明确不清缓存
+     * 原先这份缓存没有第二个释放点：`ClipboardImageGridView.stopWork()` 明确不清缓存
      * （按实例清会误伤另一处正在用的屏，见 L-1262），LRU 只在装不下时按字节上限自己淘汰
      * ⇒ 浏览过剪贴板图片后最多 12MB（低档机 6MB）解码位图长期驻留在常驻的 IME 进程里。
      *
@@ -151,7 +151,7 @@ internal object ClipboardThumbLoader {
      * ② 本对象挂在 Application 上的进程级 ComponentCallbacks2（服务不在时也照样让位）。
      *
      * 清缓存不改正确性：缓存是纯派生数据，下一次 [load] 必然 miss 并重新解密解码；
-     * **已在屏幕上的位图不会消失**（由 ImageView 持有，不随缓存清空而回收），所以不会出现空白格子。
+     * 已在屏幕上的位图不会消失（由 ImageView 持有，不随缓存清空而回收），所以不会出现空白格子。
      * 负缓存 [failedAt] 与在途登记 [inFlight] 不动：两者都不含位图，清掉反而会让坏图立刻重排解码。
      */
     fun releaseMemory() {

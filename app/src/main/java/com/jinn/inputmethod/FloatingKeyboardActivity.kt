@@ -29,7 +29,7 @@ import android.widget.TextView
  * 读写两侧都过 [FloatingKeyboard.serializePackages] / [FloatingKeyboard.parsePackages] 归一。
  *
  * ## 包可见性
- * 本页只列**有桌面入口的应用**（`ACTION_MAIN` + `CATEGORY_LAUNCHER`），manifest 用
+ * 本页只列有桌面入口的应用（`ACTION_MAIN` + `CATEGORY_LAUNCHER`），manifest 用
  * `<queries>` 声明这一条 intent —— **不申请 `QUERY_ALL_PACKAGES`**。理由：悬浮键盘的绑定对象
  * 必然是用户会去用的前台 APP，没有桌面入口的应用（输入法自身之外的服务、插件）既进不去前台，
  * 也就没有必要暴露包名；权限面越小越好。

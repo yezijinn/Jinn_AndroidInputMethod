@@ -16,7 +16,7 @@ package com.jinn.inputmethod
  *  - [ClipboardKeyPresence]：由 `ClipboardDb.get()` 安装一次的行数探针。探针缺失或探测抛异常
  *    一律按「有密文」处理（fail-closed，宁可新建下一代也不覆盖历史别名）。
  *
- * ⚠ 探针**必须在 ClipboardCrypto 的监视器之外**调用：写路径的既有锁序是
+ * ⚠ 探针必须在 ClipboardCrypto 的监视器之外调用：写路径的既有锁序是
  * 「DB 监视器 → Crypto 监视器」（`ClipboardDb.upsertImportChunk` 在锁内开事务并逐行加密，见该类
  * KDoc 的锁序说明），在 Crypto 监视器内去要 DB 连接就是反向边，非 WAL 库只有一个连接 ⇒ 死锁。
  */

@@ -31,7 +31,7 @@ class CandidateScrollView @JvmOverloads constructor(
     var expanded: Boolean = false
 
     /**
-     * 回到最左，并**当场结束进行中的甩动**。
+     * 回到最左，并当场结束进行中的甩动。
      *
      * `scrollTo(0, 0)` 只改本视图的滚动位、不碰内部 `OverScroller`：下一帧 `computeScroll()` 仍按
      * 滚动器自己的位置再滚回去 ⇒ 复位被覆盖。现象是换一批候选后，旧偏移仍生效，

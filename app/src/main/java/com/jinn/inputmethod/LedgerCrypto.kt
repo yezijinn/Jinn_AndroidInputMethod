@@ -18,7 +18,7 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * 词面落盘加密的密钥与行级 AEAD（[SelectionLedger] / [UserFrequency] / [UserPhrases] 共用）。
  *
- * **为什么台账不能整文件加密**：台账只增不删、可能几万行，整文件壳（[ConfigCrypto] 那一套）每追加
+ * 为什么台账不能整文件加密：台账只增不删、可能几万行，整文件壳（[ConfigCrypto] 那一套）每追加
  * 一次都要「解密全量 → 追加 → 重新加密全量」，等于把一次按键的选择放大成整表重写 —— 既慢又费电。
  * 所以改成**行级 AEAD**：一行记录自成一个可独立解密的单元，追加仍是 `O_APPEND` 的 O(1) 写。
  * 词频则相反（上限 3000 行、2 秒防抖）：整份「解密 → 改 → 加密 → 原子替换」只要 0.2ms 量级
@@ -30,7 +30,7 @@ import javax.crypto.spec.SecretKeySpec
  *  - DEK 用 Android Keystore 的密钥加密后落 `user_picks.key`（别名 [KEY_ALIAS]，**独立于**剪贴板与
  *    凭据的密钥 —— 任一侧轮换 / 失效都不能牵连另一侧）。Keystore 每次进程只走一次，
  *    不会出现在热路径上。
- *  - **词频与台账共用这一把 DEK / 这一个包裹件**：两者记的是同一批「用户选过的词」，是同一个隐私
+ *  - 词频与台账共用这一把 DEK / 这一个包裹件：两者记的是同一批「用户选过的词」，是同一个隐私
  *    边界；共用一个包裹件就只丢得起一次、只需要一次解包（多一把密钥只是多一次 binder 往返与
  *    多一个会丢的东西）。生命周期差异靠**文件**处理，不靠密钥：台账只增不删，词频可被引擎重算、
  *    可被「关闭学习」清空，删文件即可，彼此不影响。
@@ -239,7 +239,7 @@ internal object LedgerCrypto {
         return dt >= 0 && dt < cooldownMs
     }
 
-    // ── 行级加解密（纯 JCE，JVM 可测）────────────────────────────
+    // ── 行级加解密（纯 JCE，JVM 可测） ──
 
     /** 一行明文 → 一条记录（不含换行） */
     fun encryptLine(line: String, key: SecretKey): String {
@@ -312,7 +312,7 @@ internal object LedgerCrypto {
         return hits * 10 >= total * 9
     }
 
-    // ── DEK 的包裹与解包（Android Keystore）─────────────────────
+    // ── DEK 的包裹与解包（Android Keystore） ──
 
     /**
      * 读包裹文件并解包；文件不存在则新建 DEK 并写回。
@@ -368,7 +368,7 @@ internal object LedgerCrypto {
      *
      * 返回值的语义是「**不许新建 DEK**」，所以**改名失败也返回 true**（L-1455）：早先只在
      * `moved == true` 时返回 true，一旦改名失败（目录建不出来 / 只读 / 改名被拒）就返回 false ⇒
-     * 调用方往下走「没有数据 ⇒ 生成新 DEK」，随后把新密钥的记录**追加进那份解不开的旧文件**，
+     * 调用方往下走「没有数据 ⇒ 生成新 DEK」，随后把新密钥的记录追加进那份解不开的旧文件，
      * 一份文件两种密钥 —— 正是本函数要防的那种数据损坏。改名不是前提，**数据还在**才是。
      */
     private fun orphanExistingData(dir: File): Boolean {

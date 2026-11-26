@@ -1404,7 +1404,7 @@ class Prefs(private val appContext: Context) {
      * 第 3 条是关键：绝不能把密文原文当成 Key 用 —— 那会发一次莫名失败的请求，
      * 而用户看到的是「凭据已配置却认证失败」，比「未配置」难查得多。
      *
-     * ⚠ 解不开还要再分两种（2026-10-30 修 A-672 / L-1462）：**永久**解不开（换机 / 密钥失效 /
+     * ⚠ 解不开还要再分两种（2026-10-30 修 L-1462）：**永久**解不开（换机 / 密钥失效 /
      * 密文损坏）才把空串写进缓存；**暂时**解不开（锁屏时 `setUnlockedDeviceRequired` 让密钥
      * 不可用）**绝不缓存** —— 缓存就等于「一次锁屏 = 本进程内凭据永久未配置」，用户解锁后
      * 打开凭据页看到整页空字段，以为凭据丢了（磁盘上的密文其实完好）。暂时失败只把下一次
@@ -1734,7 +1734,7 @@ class Prefs(private val appContext: Context) {
         // 默认模板本身就含一个 `\n`（`…只返回译文：\n{{text}}`）⇒ 同样必须走宽松版（L-715）
         set(value) = putDefaulted(KEY_OPENAI_USER_PROMPT, value, OpenAiTranslator.DEFAULT_USER_PROMPT, multiline = true)
 
-    /** Temperature；**空串 = 不发送该参数**（部分推理模型不接受它） */
+    /** Temperature；空串 = 不发送该参数（部分推理模型不接受它） */
     var openAiTemperature: String
         get() = strOr(KEY_OPENAI_TEMPERATURE, "").orEmpty()
         set(value) = sp.edit { putString(KEY_OPENAI_TEMPERATURE, value.trim()) }
@@ -2548,7 +2548,7 @@ class Prefs(private val appContext: Context) {
             java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         /**
-         * 暂时解不开（锁屏）时的重试时刻：此刻之前不再碰 Keystore、也不再刷日志（修 A-672 / L-1462）。
+         * 暂时解不开（锁屏）时的重试时刻：此刻之前不再碰 Keystore、也不再刷日志（修 L-1462）。
          *
          * 为什么需要闸：锁屏期间翻译设置页一次进页要读这批键十余次，若不设闸就是十几次 1.1 ms 的
          * Keystore 尝试 + 十几条 W 日志（正是旧版「直接缓存空串」想避免的那笔代价）。闸只推迟 1 秒，

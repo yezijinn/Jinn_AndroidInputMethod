@@ -34,7 +34,7 @@ class MicButton @JvmOverloads constructor(
     /**
      * 图标分两枚：空闲态底盘是跟主题走的（亮色近白 / 暗色深灰），录音态底盘是红色（两档都深）。
      * 只给一枚令牌就会在一档里与自己的底盘撞车 —— 亮色档白图标压近白底盘只有 1.2~1.4:1
-     * （2026-10-02 修复 L-475）。
+     * （2026-10-02，L-475）。
      */
     private val colorGlyph = context.getColor(R.color.mic_glyph)
     private val colorGlyphActive = context.getColor(R.color.mic_glyph_active)

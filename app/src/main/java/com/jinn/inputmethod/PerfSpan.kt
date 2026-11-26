@@ -15,7 +15,7 @@ package com.jinn.inputmethod
  * **零成本约定**（本项目的硬约束：日志不影响业务）：
  *  - 开关是 [Diagnostics.KEY_TRACE]（= `BuildConfig.DEBUG`）。release 包里 [start] 恒返回 null，
  *    调用点的 `?.mark` / `?.dump` 全部退化成一次空判断，字符串拼接与 logd 调用被编译器消除；
- *  - 只在**会话边界**（建视图 / 焦点进入 / 窗口显示）与**每次按键一次的候选刷新**上取时间，
+ *  - 只在**会话边界**（建视图 / 焦点进入 / 窗口显示）与每次按键一次的候选刷新上取时间，
  *    不在逐键的绘制、触摸回调里打点；
  *  - 日志走 V 级：只进 logcat，不进诊断包（[Diagnostics] 的 V 级默认不落盘）。
  */

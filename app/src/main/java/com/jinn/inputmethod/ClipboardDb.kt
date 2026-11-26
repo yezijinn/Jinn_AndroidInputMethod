@@ -729,8 +729,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 「全库删除」的锁，会把用户仅剩的、仍有抢救可能的密文一次删光，且随后 `gc` 连图片文件
      * 一起收 —— 不可逆。宁可留着一个读不出的库等后续版本处理。
      *
-     * ⚠ 调用方必须紧跟一次图片文件回收（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
-     * （A-559）。漏了就会留下「列表里已删、密文还在盘上」的孤儿文件（与 A-558 同表现），
+     * ⚠ 调用方必须紧跟一次图片文件回收（`ClipboardImageFiles.gc`）：本层只管行、不碰文件。
+     * 漏了就会留下「列表里已删、密文还在盘上」的孤儿文件，
      * 而且要等下一次启动 gc 才收。
      * @return 删除的条数
      */
@@ -1198,7 +1198,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 按分类标签删（LIKE 命中即删，不动收藏）；传 null 删全部非收藏行。
      *
      * ⚠ 调用方必须紧跟一次图片文件回收（`ClipboardImageFiles.gc`）：本层只管行、不碰文件
-     * （A-559，口径同 [deleteAll]）。
+     * （口径同 [deleteAll]）。
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized
@@ -1216,7 +1216,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * ⚠ 两条路径删掉的图片文件**都不在本层收**（DB 只管行、不碰文件）：单条删除走
      * `deleteFor`（精准），批量走 `gc`（短保护窗）—— 调用方必须紧跟一次
-     * `ClipboardImageFiles.gc`（A-559）。
+     * `ClipboardImageFiles.gc`。
      */
     // 写路径统一监视器：说明见 delete 上方那段（BUG-04）
     @Synchronized

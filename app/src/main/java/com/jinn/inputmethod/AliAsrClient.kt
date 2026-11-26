@@ -96,7 +96,7 @@ class AliAsrClient(
     /**
      * 本条连接上是否已经发过 `run-task`。
      *
-     * 阿里**一条连接只承载一个任务**：`finish-task` 之后同一条 WebSocket 不能再开新任务。
+     * 阿里一条连接只承载一个任务：`finish-task` 之后同一条 WebSocket 不能再开新任务。
      * 上一段还在等 `task-finished`（用户松手后立刻又按了一次）时，若在旧连接上再发一次
      * `run-task`，服务端按协议错处理；更要紧的是旧任务的 `task-finished` 回来时会调用
      * [onFinished]，把**新任务**的音频泵、累积器与连接一并收掉 —— 表现是「两段都没了」。
@@ -116,7 +116,7 @@ class AliAsrClient(
     @Volatile
     private var awaitingFinish = false
 
-    // ── 音频泵 ──────────────────────────────────────────────
+    // ── 音频泵 ──
 
     private val pumpHandler = Handler(Looper.getMainLooper())
 
@@ -135,7 +135,7 @@ class AliAsrClient(
     @Volatile
     private var pumpRunning = false
 
-    // ── 超时与空闲关闭 ──────────────────────────────────────
+    // ── 超时与空闲关闭 ──
 
     private val timeoutHandler = Handler(Looper.getMainLooper())
 
@@ -153,7 +153,7 @@ class AliAsrClient(
      * [releaseAndPreconnect]（收到 `task-finished` 后预连下一条），而「用户刚好在收尾那一瞬按键」
      * 正是 [sessionStarted] 专门要挡的场景。不串行化时两次 `newWebSocket` 可以交错到
      * 「两个都先 closeSocket、再各自赋值」：先建那条被后写的 `socket = …` 覆盖，它的回调从此
-     * 因 `webSocket !== socket` 全部返回，**没有任何人再持有它** —— 一条没有读超时、没有 ping 的
+     * 因 `webSocket !== socket` 全部返回，没有任何人再持有它 —— 一条没有读超时、没有 ping 的
      * 连接就这么白挂着，直到服务端自己断。
      */
     @Synchronized
@@ -161,7 +161,7 @@ class AliAsrClient(
         if (userInitiated) cancelIdleClose()
         // 早退判据必须含 CONNECTING（与 [XfIatClient.connect] 同一条）：预连
         // （[releaseAndPreconnect]）与「进入语音面板」（`JinnIme.onStartInputView`）都会在握手窗口里
-        // 再调一次 connect —— 只认 ONLINE 的话，这里会把**正在握手的 socket 关掉重建**，
+        // 再调一次 connect —— 只认 ONLINE 的话，这里会把正在握手的 socket 关掉重建，
         // 白做一次 TLS + WS 握手（状态条还要再闪一次「连接中」）。
         if (!force && (state == LinkState.ONLINE || state == LinkState.CONNECTING) && socket != null) return
 
@@ -358,7 +358,7 @@ class AliAsrClient(
         connect(force = false, userInitiated = false)
     }
 
-    // ── 音频泵 ──────────────────────────────────────────────
+    // ── 音频泵 ──
 
     /** `task-started` 到达：从此刻起按 100ms 节拍发音频（此前攒的音频一并补上，不丢） */
     private fun startPump() {
@@ -410,7 +410,7 @@ class AliAsrClient(
         }
     }
 
-    // ── 超时 ────────────────────────────────────────────────
+    // ── 超时 ──
 
     private fun onStartTimeout() {
         if (taskId == null || pumpRunning) return
@@ -441,7 +441,7 @@ class AliAsrClient(
         timeoutHandler.removeCallbacks(finishTimeoutRunnable)
     }
 
-    // ── WebSocket 回调 ──────────────────────────────────────
+    // ── WebSocket 回调 ──
 
     private val listener = object : WebSocketListener() {
 

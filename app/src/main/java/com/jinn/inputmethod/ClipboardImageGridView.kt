@@ -14,7 +14,7 @@ import android.widget.TextView
  * 剪贴板图片网格视图：缩略图平铺（点击上屏 / 长按出操作条）。面板与历史页共用，
  * 两处各自持有实例并注入各自的点击、长按实现。
  *
- * 独立成类而不是塞进 [ClipboardPanelView]：网格与列表的**取数、生命周期、内存模型**都不同
+ * 独立成类而不是塞进 [ClipboardPanelView]：网格与列表的取数、生命周期、内存模型都不同
  * （列表逐页解密文本；网格走文件 + 缩略图缓存），混在一起会让两条分页逻辑互相干扰。
  *
  * 同样自绘网格的还有 [GalleryPanelView]，但两者只共享底层设施，UI 与分页各写一份：
@@ -180,7 +180,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     }
 
     /**
-     * 按当前布局参数**重排已加载的格子**（BUG.md L-1243）：列数 / 行高变化时数据没变，
+     * 按当前布局参数重排已加载的格子（BUG.md L-1243）：列数 / 行高变化时数据没变，
      * 只重建 cell、保留 items 与游标 —— 翻到第 5 页再调布局不会退回第一页，也不会把
      * 刚解好的缩略图判为过期重解一遍。滚动位置尽力按原值恢复。
      */
@@ -212,7 +212,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
                 )
             }.getOrNull()
             post {
-                // 过期回调**只 return、不复位共享状态**（BUG.md L-1259）：loading 此刻可能属于新一代的
+                // 过期回调只 return、不复位共享状态（BUG.md L-1259）：loading 此刻可能属于新一代的
                 // 任务，复位它会让滚动到底的判断误以为「没在加载」⇒ 同一页被取两次。面板侧的纪律是
                 // 「过期即 return，绝不碰共享计数」，网格改成同款。
                 if (gen != generation) return@post
@@ -294,7 +294,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     /**
      * 格子宽度：按列数等分网格可用宽度。
      *
-     * 不用 `weight=1` 均分：那样**末行不满时剩下的格子会被拉宽**（三张图在「每行 5 张」下各占 1/3 宽），
+     * 不用 `weight=1` 均分：那样末行不满时剩下的格子会被拉宽（三张图在「每行 5 张」下各占 1/3 宽），
      * 与图库快贴的观感不一致 —— 图库是补空位、格子尺寸恒定。这里按固定像素切，行尾自然留白。
      * 可用宽度取自布局后的实际宽度（首帧未布局时回退屏幕宽度）。
      */
@@ -397,7 +397,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
         const val TEXT_EMPTY = "暂无图片\n复制的图片会自动保存在这里"
 
         /**
-         * 只看收藏时的空态（BUG.md L-1251 / L-1255）：出口只能指向**该分支下确实存在**的控件 ——
+         * 只看收藏时的空态（BUG.md L-1251 / L-1255）：出口只能指向该分支下确实存在的控件 ——
          * 「布局」键只在图片分类可见（收藏分组的条带里它是隐藏的），提它等于给一个死出口。
          * 「图片」分类的页签在面板与历史页都是常驻可见的，指向它两处都成立。
          */

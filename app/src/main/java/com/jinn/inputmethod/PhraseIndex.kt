@@ -297,7 +297,7 @@ internal class PhraseIndex private constructor(
          * 与构建脚本产出完全同格式（同一套 header/偏移布局），因此可以互相读取；
          * 已由 `IndexBuilderParityTest` 的**两层**对拍钉住（冻结产物 + 现跑脚本）。
          *
-         * 峰值（L-1143）：两段大段（键区 / 词区）**边解析边写临时件**，堆上只留两个长度数组
+         * 峰值（L-1143）：两段大段（键区 / 词区）边解析边写临时件，堆上只留两个长度数组
          * （≤ keyCount 与 2×keyCount 字节，30 万键约 0.9MB）与最终产物一份 ⇒ 构建期堆峰值 ≈ 1× 索引体积。
          * 原先四段各留一个 `ByteArrayOutputStream`：装配时它们与产物同时在堆上 ⇒ 峰值 ≈ 2×
          * （part4 索引约 9MB 时白占 9MB，单段超 12MB 还会落进 ART 大对象空间）。

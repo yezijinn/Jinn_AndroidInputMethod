@@ -54,7 +54,7 @@ object FavoriteSymbols {
         val arr = try {
             JSONArray(raw)
         } catch (e: Exception) {
-            // 回退预置是**有意的**（BUG.md L-1167 / 第 22 轮已复核），但静默到只剩「符号变回 D I Y」
+            // 回退预置是**有意的**（BUG.md L-1167），但静默到只剩「符号变回 D I Y」
             // 就无从排查：数据可能来自旧版本、外部改写或导入（L-1417）。只加一条 W，行为不动 ——
             // 不打原文（prefs 里可能就是用户的收藏内容）
             Diagnostics.w(TAG, "收藏符号 JSON 无法解析，按出厂预置处理: ${e.javaClass.simpleName}")

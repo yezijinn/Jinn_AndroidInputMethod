@@ -11,7 +11,7 @@ import android.widget.TextView
 /**
  * 模糊音容错页：从设置页「增加模糊拼音」按钮进入。
  *
- * 每组一行勾选框（清单见 [FuzzyPinyin.GROUPS]），**勾选即落盘并即时生效**
+ * 每组一行勾选框（清单见 [FuzzyPinyin.GROUPS]），勾选即落盘并即时生效
  * （[Prefs.fuzzyPinyinMask] + [PinyinEngine.setFuzzyMask]）——不设「保存」按钮，与符号排序页
  * 「即时落盘」一致。规则、上限与顺序契约全在 [FuzzyPinyin] 与 [PinyinEngine.query]，本页只负责展示与写盘。
  */
@@ -55,7 +55,7 @@ class FuzzyPinyinActivity : Activity() {
     }
 
     /**
-     * 按当前掩码渲染勾选态；**每次回前台都重画**（见 [onStart]），避免与设置页 / 备份导入后的值不一致。
+     * 按当前掩码渲染勾选态；每次回前台都重画（见 [onStart]），避免与设置页 / 备份导入后的值不一致。
      *
      * ⚠ 渲染不能只留在 `onCreate`：页面在栈里时从设置页导入配置或改过模糊音，返回本页会停在旧快照上
      * （与 `RareCharsActivity` 同款缺陷、同款修法，两页是复刻关系，改动必须同步 —— BUG.md L-74 / L-48）。

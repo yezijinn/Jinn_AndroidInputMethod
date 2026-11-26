@@ -111,7 +111,7 @@ object ClipboardCrypto {
      * `getKey` 只走一次 binder，**实测 0.21~0.33 ms**（慢机型更高，换机须重测），
      * 而且它**不是**单次加解密的大头：单次 1.1~1.3 ms 里 `init` 占约六成（0.63~0.76 ms，
      * 在 TEE 里建操作会话）、`doFinal` 0.51~0.62 ms，`getInstance` / base64 各只 0.004~0.006 ms；
-     * `getKey` 命中缓存后为 0。缓存它值得（省一次 binder），但**别把它当加速入口**：
+     * `getKey` 命中缓存后为 0。缓存它值得（省一次 binder），但别把它当加速入口：
      * 曾照着旧版注释里的「5-20ms 是主要耗时」去找优化点，扑空。
      *
      * SecretKey 只是对托管密钥的不透明句柄（密钥材料不出安全硬件），缓存它不会削弱安全性。
@@ -136,7 +136,7 @@ object ClipboardCrypto {
     /**
      * 取密钥句柄（首次或失效后重建）。
      *
-     * **密钥永不覆盖已有别名**（2026-11-14 复核）：`generateKey()` 同名 = 先删后建，而 Keystore
+     * 密钥永不覆盖已有别名（2026-11-14）：`generateKey()` 同名 = 先删后建，而 Keystore
      * 密钥不可导出 ⇒ 一次误判就让全部旧密文永久失钥。改为按代际分配别名：第 1 代沿用历史名
      * [KEY_ALIAS]，之后每建一把新钥用 `KEY_ALIAS_g<N>`。
      *
@@ -254,7 +254,7 @@ object ClipboardCrypto {
      * 选一个**空闲**代际建钥；返回 null = 本次不建（探测抖动或真耗尽）。
      *
      * 库内还有文本密文时绝不复用第 1 代（那可能是「假取不到」，覆盖会让旧密文永久失钥）；
-     * 全新库才用第 1 代。**绝不返回已占用的代际** —— `generateKey` 同名是先删后建。
+     * 全新库才用第 1 代。绝不返回已占用的代际 —— `generateKey` 同名是先删后建。
      */
     private fun pickGeneration(hasRows: Boolean): Int? {
         var probeFailed = false
@@ -302,7 +302,7 @@ object ClipboardCrypto {
      * 丢弃密钥句柄、KeyStore 实例**与**两张代际缓存：下次 [keyOrNull] 从零重建。
      *
      * ⚠ 缓存必须一起清：只清 `cachedKey` 而留着 `genKeys`，重建后 `storedKeyFor` 仍返回旧句柄，
-     * `Cipher.init` 继续抛 —— 重建"看起来跑了"，实际无效。
+     * `Cipher.init` 继续抛 —— 重建「看起来跑了」，实际无效。
      */
     private fun invalidateKey() {
         synchronized(this) {
@@ -432,7 +432,7 @@ object ClipboardCrypto {
      * 字节版加密（图片原字节 / 缩略图，落盘用）：**二进制壳** `[1B ver][12B iv][ct]`。
      *
      * 为什么不复用字符串版（`base64(iv):base64(ct)`）：base64 让文件体积 +33%，而图片是本模块
-     * 体积最大的数据。两者**同一密钥、同一 AES-GCM 参数**，只是外层编码不同（互不兼容，
+     * 体积最大的数据。两者同一密钥、同一 AES-GCM 参数，只是外层编码不同（互不兼容，
      * 由首字节版本号兜底：读到不认识的首字节即判失败，不会把字符串密文当字节壳解）。
      *
      * @return 密文；空输入或加密失败返回 null（调用方记日志但不外抛）

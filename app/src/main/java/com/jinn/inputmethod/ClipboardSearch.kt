@@ -122,7 +122,7 @@ internal object ClipboardSearch {
      * 收尾状态。
      *
      * 保留量触顶优先：那时循环已经提前 `break`，后面扫到哪儿都不影响「结果被截断」这个事实。
-     * 其次是「库比 [limit] 大」**且这轮不是扫到没数据才停**（`exhausted` 为 false 说明循环是被上界
+     * 其次是「库比 [limit] 大」且这轮不是扫到没数据才停（`exhausted` 为 false 说明循环是被上界
      * 掐停的）——两条都成立才是「更旧的内容没查」。库刚好等于上限时不算截断：那些行全扫过了。
      */
     fun capState(

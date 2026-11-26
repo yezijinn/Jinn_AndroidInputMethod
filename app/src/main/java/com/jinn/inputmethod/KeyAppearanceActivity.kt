@@ -189,7 +189,7 @@ class KeyAppearanceActivity : Activity() {
         )
         textPinyinSize.text = CandidateText.formatPinyinSp(rawPinyinSp, autoPinyinSp)
 
-        // 候选字号：候选词的字号（sp）。**整个候选栏按它派生**（行高 / 拼音条高度 / 栏高一起变），
+        // 候选字号：候选词的字号（sp）。整个候选栏按它派生（行高 / 拼音条高度 / 栏高一起变），
         // 标题同样在代码里下发。
         val labelTextSize = findViewById<TextView>(R.id.label_candidate_text_size)
         val seekTextSize = findViewById<SeekBar>(R.id.seek_candidate_text_size)

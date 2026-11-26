@@ -89,7 +89,7 @@ class StorageUsageActivity : ComponentActivity() {
         }
     }
 
-    // ── 渲染 ───────────────────────────────────────────────
+    // ── 渲染 ──
 
     private fun render(report: StorageUsage.Report?) {
         listHost.removeAllViews()

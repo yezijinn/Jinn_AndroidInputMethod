@@ -119,7 +119,7 @@ internal object DeepgramRequest {
 /**
  * 回包解析（纯函数）：`results.channels[0].alternatives[0].transcript`。
  *
- * 错误有三种形态，**都不能只报「识别失败」**：
+ * 错误有三种形态，都不能只报「识别失败」：
  *  · `{"err_code":"INVALID_AUTH","err_msg":"…"}`：鉴权类（Key 错 / 过期）；
  *  · `{"category":"…","message":"…"}`：参数与配额类（模型不存在、账户额度不足）；
  *  · 纯状态码（401 / 402 / 403 / 429，正文可能是空）—— 这是 Key 填错与「没钱了」的唯一线索。

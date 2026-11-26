@@ -80,7 +80,7 @@ internal class AliyunTranslator(
         return Request.Builder()
             .url(ENDPOINT_URL)
             .post(bodyBytes.toRequestBody(JSON_MEDIA_TYPE))
-            // ⚠ 这里**不再**设 `Content-Type` 头（2026-10-02 修复 L-486）：实发头由 OkHttp 的
+            // ⚠ 这里**不再**设 `Content-Type` 头（2026-10-02，L-486）：实发头由 OkHttp 的
             // BridgeInterceptor 用 `body.contentType().toString()` 决定，显式设的同名头会被它覆盖 ⇒
             // 那一行是死代码，还会与 `sign()` 上方的注释互相矛盾（误导后人以为「必须显式设头」）。
             // 现在签名串取自同一个 `JSON_MEDIA_TYPE.toString()`（单一真相）：要改 Content-Type
@@ -103,8 +103,8 @@ internal class AliyunTranslator(
         //  · 认证失败时阿里云的 HTTP 状态是 **404**（`InvalidAccessKeyId.NotFound` / `SignatureDoesNotMatch`）；
         //  · 参数出错时是 **HTTP 200 + `{"Code":"10004"}`**（实测：缺 Scene）。
         // 只看状态会把这两种情况分别显示成「服务异常」与「服务返回结果为空」，用户都无从下手。
-        // 成功码是 "200"（大写 Code 与老写法 code 都认，数字 200 经 optString 也是 "200"）。
-        // 判存在性要**排除 JSON null**（2026-09-30 审查）：`optString` 对 `"code":null` 返回
+        // 成功码是 「200」（大写 Code 与老写法 code 都认，数字 200 经 optString 也是 「200」）。
+        // 判存在性要**排除 JSON null**（2026-09-30）：`optString` 对 `"code":null` 返回
         // 字面量 `"null"`、对 `"code":0` 返回 `"0"` —— 两者都会被当成业务错误码（归 SERVER），
         // 而正文其实已经译好躺在 `Data.Translated` 里（`code:0` 是这类 OpenAPI 常见的成功约定）。
         // 仍用 `opt(...).toString()` 而不是 jsonText：数字码（10004）必须保留，jsonText 只认字符串会漏判。
@@ -149,7 +149,7 @@ internal class AliyunTranslator(
         const val SIGNATURE_METHOD = "HMAC-SHA1"
         const val ACCEPT = "application/json"
         /**
-         * 参与签名的 Content-Type —— 必须是 **OkHttp 实际发出的那个形态**。
+         * 参与签名的 Content-Type —— 必须是 OkHttp 实际发出的那个形态。
          *
          * ⚠ 显式 `.header("Content-Type", …)` 会被 OkHttp 的 BridgeInterceptor **覆盖**：
          * 它执行时用 `body.contentType().toString()` 重设该头，而 `MediaType.toString()` 把参数
@@ -242,7 +242,7 @@ internal class AliyunTranslator(
          * 阿里云错误码 → 归一分类（数字码按官方表逐条列，英文码按前缀匹配，实测见 `InvalidAccessKeyId.NotFound`）。
          *
          * 数字码全部逐条写出、不再靠 else 兜：落进 else 就归 SERVER ⇒ 提示「稍后重试」，
-         * 而参数 / 语言方向 / 额度 / 欠费这几类重试**必然再失败、每次都真计费**
+         * 而参数 / 语言方向 / 额度 / 欠费这几类重试必然再失败、每次都真计费
          * （2026-10-09 修复 L-1125；表取自官方「机器翻译通用版调用指南」错误码一节，逐条核对）。
          *
          * `InvalidTimeStamp.Expired` 归 AUTH：它是设备时钟偏差导致的签名被拒，
@@ -258,7 +258,7 @@ internal class AliyunTranslator(
             code == "10006" -> TranslationError.PARAM     // 语种识别失败
             // 超出单次字符上限 —— 设置页的说明里点名的就是它（「超出报错 10008」）。落进 else 会让
             // 「原文过长」显示成「服务异常」，用户按提示重试永远失败，而说明与行为互相矛盾
-            // （2026-10-01 修复 L-328）。
+            // （2026-10-01，L-328）。
             code == "10008" -> TranslationError.PARAM
             // ── 账号 / 权限类：要去控制台处理，重试无用 ──
             code == "10009" -> TranslationError.AUTH      // 子账号没有权限

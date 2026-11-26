@@ -8,7 +8,7 @@ package com.jinn.inputmethod
  *
  * 理由与自建 CapsWriter 的 `ws://<局域网>` 同一条：明文协议只在本机回环或自家局域网里才不会被
  * 中间人读到，而这条链路上传的是**整段录音**和（HTTP 头里的）API Key。公网明文一律拒绝，
- * 并且**拒绝原因要能直接显示给用户**（保存到 `edit_oai_base.error`，运行时落到状态条），
+ * 并且拒绝原因要能直接显示给用户（保存到 `edit_oai_base.error`，运行时落到状态条），
  * 让用户知道该改成 `https://`，而不是「保存不了」。
  *
  * 共用口径：本对象只服务语音转写（[OpenAiAsrClient] 与 Azure 语音的 normalize 直接复用），

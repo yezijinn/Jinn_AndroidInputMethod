@@ -88,7 +88,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
     private val buttons = mutableListOf<TextView>()
 
     /**
-     * 未绑定 / 授权失效 / 空目录三态共用的「去设置里绑定」行。**常驻视图，只切可见性**。
+     * 未绑定 / 授权失效 / 空目录三态共用的「去设置里绑定」行。常驻视图，只切可见性。
      *
      * ⚠ 早先是在 [render] 里 `addView`（L-1025）：[render] 每次展开都会被调用，
      * [grid] 有自己的 `removeAllViews`、这一行挂在面板上没人清，每进一次面板就多一个按钮。
@@ -261,7 +261,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      * 首屏内容就绪（BUG.md L-1320）：键盘侧据此决定何时把面板切成可见。
      *
      * 与剪贴板面板同理 —— 先切可见只会看到「有表头、没图」的空块（格子要等 SAF 列目录 + 解码）。
-     * 判据：正常列表取**第一张缩略图贴上格子**；空 / 未绑定 / 读不到三态在 [render] 时直接算就绪。
+     * 判据：正常列表取第一张缩略图贴上格子；空 / 未绑定 / 读不到三态在 [render] 时直接算就绪。
      */
     var onFirstContentReady: (() -> Unit)? = null
 

@@ -129,7 +129,7 @@ class FavoriteSymbolsActivity : Activity() {
         const val TEXT_DESC = "增删「收藏」里的符号\n每页最多 26 个，满了自动开新页\n改完即时保存，返回键盘就生效。"
         const val TEXT_ADD = "＋ 添加符号"
 
-        // ── 数字行按钮文本（2026-10-21 起并入本页）─────────────────────────
+        // ── 数字行按钮文本（2026-10-21 起并入本页）──
         //
         // 本页代码下发的文案集中在这几个常量，改动只动这里。
         /** 分区标题 */
@@ -338,7 +338,7 @@ class FavoriteSymbolsActivity : Activity() {
      * 写一个槽位并即时生效。
      *
      * 三件事的顺序不能换：
-     *  ① **清洗 + 校验在写盘之前**（与「添加符号」同口径：空 = 回落默认；超限 = 拒绝并提示，
+     *  ① 清洗 + 校验在写盘之前（与「添加符号」同口径：空 = 回落默认；超限 = 拒绝并提示，
      *     不写脏值）。限长必须走码点口径（[FavoriteSymbols.withinLimit]），否则一串 emoji
      *     会被 UTF-16 码元数误判超限。
      *  ② `flush()` 同步落盘（BUG-34）：改完立刻切走、进程被系统回收时，最后一次改动会安静地丢。
@@ -386,7 +386,7 @@ class FavoriteSymbolsActivity : Activity() {
                 elevation = 0f
                 layoutParams = FrameLayout.LayoutParams(cell, cell)
             })
-            // ✕ 移除角标（2026-10-02 修复）：
+            // ✕ 移除角标（2026-10-02）：
             // ① 显示**符号**而不是「移除」两个字 —— 22dp 角标里两个汉字被 `Button` 的默认内边距挤到
             //    几乎不可见，用户看到的就是「按钮和背景色相同、文字不可见」；无障碍语义仍由
             //    contentDescription 保留（读作「移除」）。

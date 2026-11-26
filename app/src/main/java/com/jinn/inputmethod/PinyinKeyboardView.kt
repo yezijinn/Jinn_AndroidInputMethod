@@ -333,7 +333,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      * 只给 [toggleCandidateExpanded] 判一次「当前有没有输入」（预测态下的渲染源取法要用），
      * 不承载「本帧输入串」——本帧串在 `refreshCandidateBar` 里是局部量 `inputNow`，
-     * 谁在它之后改了 composing 都不会影响渲染（A-619：旧写法让「写入点与读取点之间
+     * 谁在它之后改了 composing 都不会影响渲染（旧写法让「写入点与读取点之间
      * 不许写 composing」成了隐式契约，一旦有人在这中间插一句清空，拼音行就显示旧串）。
      */
     private var lastRefreshedInput: String? = null
@@ -3690,7 +3690,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 上一次查询的列表，拿它配本次输入串会错位一帧 ⇒ 收起按奇偶漏判（2026-10-21 实测：展开态
         // 按 n 不收、再按一次改变了输入的键才收）。判据收在 [CandidateRows.shouldCollapseExpanded]。
         // 本帧输入串只拷一次：下面的 `input` 直接取这个局部量（早先靠「两者之间不写 composing」
-        // 的巧合来保证内容相同 —— 那是隐式契约，见 A-619），且早先每键要拷两次。
+        // 的巧合来保证内容相同 —— 那是隐式契约），且早先每键要拷两次。
         val inputNow = composing.toString()
         lastRefreshedInput = inputNow
         // 本帧渲染源（候选 / 预测词）的条数与取样字：三角、展开排数、预取量三条路径必须同源。
@@ -3769,7 +3769,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             return
         }
         // 本帧已拷好的串（见上面的 `inputNow`）：**直接复用局部量**，不再经字段中转 ——
-        // 中转会让「这中间不许写 composing」变成隐式契约（A-619）
+        // 中转会让「这中间不许写 composing」变成隐式契约
         val input = inputNow
         // 拼音行：双拼由「双拼候选全音」总控 —— 关 = 显示按下的英文字母（原样，不打标）；
         // 开 = 展开成全拼并按音节打标（残码逐键展开）。全拼模式恒按音节打标。
@@ -3861,7 +3861,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (result.candidates.isEmpty() && !PinyinEngine.isFullyLoaded) {
             lastCandidates = emptyList()
             collapseCandidatesAndRelayout(rowsSetting, candidateSp, pinyinSp, pinyinGap, spacingHalfPx)
-            // 与上面「无内容」/ 下面「候选集为空」两处同口径（A-562）：展开态下只剩一行
+            // 与上面「无内容」/ 下面「候选集为空」两处同口径：展开态下只剩一行
             // 「词库加载中」提示却仍占 3~4 排高度 ⇒ 收起并落回档位高度，否则是一块空高栏。
             showPinyin(displayText)
             renderCandidateHint(context.getString(R.string.engine_dict_filling))
@@ -5044,7 +5044,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             // 在 apply 块里引用后声明的闭包编译不过。
             val key = PinyinKey(context).apply {
                 label = labels[i]
-                // 数字 / 符号层的居中口径（A-175）：不套用字母层的小字顶置样式
+                // 数字 / 符号层的居中口径：不套用字母层的小字顶置样式
                 centeredStyle = true
             }
             // 点击 = 即时上屏，与数字层（`onLetterPressed` 的 LAYER_DIGIT）和密码数字条

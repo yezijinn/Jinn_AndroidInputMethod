@@ -133,7 +133,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
                     jsonCode(error, "code")?.takeIf { it.isNotBlank() } ?: jsonCode(error, "type")
                 else -> error.toString()
             }
-            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02 修复：直接 return 曾挤掉状态码结论）：
+            // ⚠ 业务码只在**更具体**时才覆盖状态码分类（2026-10-02：直接 return 曾挤掉状态码结论）：
             // `openAiErrorOf` 认不出时返回 SERVER，直接 return 会**挤掉** `httpErrorOf` 的结论 ——
             // `404 + {"error":{"message":…}}` 会从 PARAM 退回 SERVER、
             // `429 + {"error":{"type":"requests"}}`（OpenAI 429 的真实形态，`code` 为 null）会

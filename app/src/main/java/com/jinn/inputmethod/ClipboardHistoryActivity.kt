@@ -165,7 +165,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /**
      * 页号钳进有效范围（BUG.md L-1323）：条目变少后停在越界页时，`pageItems()` 会取到空页。
      *
-     * **必须在适配器刷新之前调**：`AbsListView` 只在收到 `notifyDataSetChanged()` 时才重跑
+     * 必须在适配器刷新之前调：`AbsListView` 只在收到 `notifyDataSetChanged()` 时才重跑
      * `getView`，刷新时若已越界，那一刻 `getCount() == 0` 就被记住 —— 之后 `buildPagerRow()`
      * 里再钳页号也不会有人重新取数，界面整页空白、分页行却显示「1/1」，而 `items` 非空
      * 连空态文案都不显示。
@@ -1028,7 +1028,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                         capped = true
                         break
                     }
-                    // 有搜索词时**不匹配的行不占窗口**（BUG.md L-1059）：窗口原先被「搜索结果上限」
+                    // 有搜索词时不匹配的行不占窗口（BUG.md L-1059）：窗口原先被「搜索结果上限」
                     // 截断，比窗口更老的记录任何关键词都搜不到（本来存在却搜不到，界面无从表达）。
                     // 续扫到命中足够或库扫完为止 —— 扫描量仍由后台线程承担，内存只留命中行。
                     if (searching && !ClipboardSearch.matches(item.content, forms)) continue
@@ -1040,7 +1040,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                             maxBytes = ClipboardStore.SEARCH_RETAIN_BUDGET_BYTES)) {
                         capped = true
                         // 只有条数触顶才够资格报「最多 N 条」；字节预算先触发时实际远小于 N（L-995）。
-                        // 且必须**库里的行真的比上限多**（BUG.md L-1327）：条目恰好等于上限时全部行
+                        // 且必须库里的行真的比上限多（BUG.md L-1327）：条目恰好等于上限时全部行
                         // 都已扫完，再报「只加载最多 N 条」是在暗示还有没显示的内容
                         cappedByCount = out.size >= maxResults
                         break
@@ -1065,7 +1065,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 allItems.addAll(out)
                 items.clear()
                 // 后台扫描已经按同一谓词滤过（`searching && !matches(...) continue`，见上面的循环）：
-                // 这里再滤一遍是同谓词的重复计算（A-749）。口径仍只有 ClipboardSearch 一份。
+                // 这里再滤一遍是同谓词的重复计算。口径仍只有 ClipboardSearch 一份。
                 items.addAll(allItems)
                 // 正文列的开窗形态与这批结果同代落地（见 activeForms）：结果行按它把窗口挪到命中点
                 activeForms = forms
@@ -1073,7 +1073,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 // 序号取绝对序位（跨全部已扫文本行）：有搜索词时窗口里只剩命中行，
                 // 若按窗口下标算，「搜索保留原始序号」就失真（BUG.md L-1059）。
                 // `scanned` 是 **1 基**（自增在跳过判定之前）⇒ 要 −(序位)+1 才等于原来的 `total − 下标`
-                // （最新行 = total）。漏掉 +1 会让整列序号少 1（BUG.md L-1379 / A-415）
+                // （最新行 = total）。漏掉 +1 会让整列序号少 1（BUG.md L-1379）
                 for ((idx, item) in allItems.withIndex()) {
                     numberById[item.id] = total - (outOrdinal.getOrNull(idx) ?: (idx + 1)) + 1
                 }
@@ -1611,7 +1611,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             })
         }
         addBtn("复制") {
-            // 与 IME 侧 copySelection 同款待遇（A-186）：同一「写系统剪贴板」操作，
+            // 与 IME 侧 copySelection 同款待遇：同一「写系统剪贴板」操作，
             // 那边有尺寸闸 + runCatching，这里原本裸调 —— 超长条目或剪贴板服务瞬断时
             // 会抛未捕获异常，而本页与 IME 同进程，崩溃一并带走输入法。
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -1905,7 +1905,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         /**
          * 库里有行、一条都解不出（BUG.md L-1328）：与「暂无记录」分开 —— 后者会让用户以为
          * 历史被清空了，而真相可能是密钥失效 / 密文损坏（也可能只是本次读取失败）。
-         * 措辞与面板侧 [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源，**只陈述事实、不承诺后续行为**：
+         * 措辞与面板侧 [ClipboardPanelView.TEXT_EMPTY_UNREADABLE] 同源，只陈述事实、不承诺后续行为：
          * 该形态不足以断定「密钥永久丢失」，任何「新复制仍会记录」「清空后可重开」都是空中承诺。
          */
         const val TEXT_UNREADABLE = "本次读取失败\n（关闭后重新打开可重试）"

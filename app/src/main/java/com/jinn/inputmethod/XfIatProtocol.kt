@@ -23,7 +23,7 @@ import kotlin.math.roundToInt
  * 协议出处：官方文档「四、接口鉴权」与官方 Demo 的首/中/末帧；`date` 必须 GMT 且与服务端
  * 偏差 ≤300 秒，故时间由调用方传入（[rfc1123Gmt] 只是默认取法）。
  *
- * 鉴权三段式（**逐字节照抄，勿自行改写**）：
+ * 鉴权三段式（逐字节照抄，勿自行改写）：
  * ```
  * signature_origin     = "host: {host}\ndate: {date}\nGET {path} HTTP/1.1"
  * signature            = Base64(HMAC-SHA256(apiSecret 原始字节, signature_origin))
@@ -164,7 +164,7 @@ object XfIatProtocol {
         /**
          * 本片序号（`sn`，1 起）。
          *
-         * wpgs 下**同一句内严格递增**：修正上一片的内容时给的是**新的 `sn`** + 指向旧的 `rg`，
+         * wpgs 下同一句内严格递增：修正上一片的内容时给的是**新的 `sn`** + 指向旧的 `rg`，
          * 所以「`sn` 回到 1」只可能是 `vgap` 断句后的新一句 —— 累积器据此切分句子。
          */
         val sn: Int,

@@ -19,7 +19,7 @@ import java.util.Base64
  * 代价是 `format` / `rate` / `channel` 三个字段必须与录音口径逐字对齐（[BaiduAsrRequest]）。
  *
  * token 缓存（[BaiduTokenCache]）：`baiduToken` 走凭据加密落盘，`baiduTokenExpireAt` 记 epoch 秒；
- * 本地判过期（提前 5 分钟）与回包 `err_no` 为 3302 / 110 / 111 时都**重取一次并重试一次**
+ * 本地判过期（提前 5 分钟）与回包 `err_no` 为 3302 / 110 / 111 时都重取一次并重试一次
  * （[BaiduRecognizeFlow] 把「只重试一次」写成结构，不是靠计数变量）。
  *
  * ⚠ 两件凭据只从 [Prefs] 读：API Key 进 token 请求的 `client_id`，Secret Key 进 `client_secret`，
@@ -309,7 +309,7 @@ internal object BaiduAsrRequest {
             .url(RECOGNIZE_URL)
             .header("Content-Type", CONTENT_TYPE_JSON)
             // 用 ByteArray 而不是 String.toRequestBody：后者会把 `charset=utf-8` 拼进 Content-Type，
-            // 百度文档写的是裸 `application/json`（2026-11-02 复核）
+            // 百度文档写的是裸 `application/json`（2026-11-02）
             .post(json.toByteArray(Charsets.UTF_8).toRequestBody(CONTENT_TYPE_JSON.toMediaType()))
             .build()
 

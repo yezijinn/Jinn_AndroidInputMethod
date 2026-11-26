@@ -75,10 +75,10 @@ object InputFieldPrivacy {
      * 是否是**数字 / 日期类**输入框（这类框不接受译文 ⇒ 发了也白花）。
      *
      * 与 [blocksTranslation] 严格分开：那个函数的宗旨是「只拦真正的口令框」，而本条是
-     * 「**别为注定失败的请求付费**」—— 判定依据完全不同，混在一起会让 KDoc 与日志都说不清。
+     * 「别为注定失败的请求付费」—— 判定依据完全不同，混在一起会让 KDoc 与日志都说不清。
      *
-     * 为什么要拦（2026-10-03 修复 L-720）：这类框的宿主会装 `InputFilter`
-     * （`DigitsKeyListener` / `DateTimeKeyListener`），它把译文**整段丢弃且不报错** ——
+     * 为什么要拦（2026-10-03，L-720）：这类框的宿主会装 `InputFilter`
+     * （`DigitsKeyListener` / `DateTimeKeyListener`），它把译文整段丢弃且不报错 ——
      * `commitText` 返回 true、提交阶段的落地复核才发现尾部对不上。落地复核的注释里本来就写着
      * 「数字框的 `DigitsKeyListener` 是最常见的一种」（L-456 / L-567），但闸门在**提交之后**，
      * 于是变成「先付费、再校验、最后只得到一句『提交后未在输入框找到译文尾部』」。
@@ -97,7 +97,7 @@ object InputFieldPrivacy {
     }
 
     /**
-     * 是否命中口令变体 —— ⚠ **必须连类位一起比**。
+     * 是否命中口令变体 —— ⚠ 必须连类位一起比。
      *
      * 只掩 [EditorInfo.TYPE_MASK_VARIATION] 会把地址栏判成口令框：平台里
      * `TYPE_TEXT_VARIATION_URI` 与 `TYPE_NUMBER_VARIATION_PASSWORD` **同为 0x10**
@@ -121,7 +121,7 @@ object InputFieldPrivacy {
     }
 
     /**
-     * 只按**变体位**判口令 —— 学习侧专用的保守兜底（2026-10-02 修复 L-466）。
+     * 只按**变体位**判口令 —— 学习侧专用的保守兜底（2026-10-02，L-466）。
      *
      * 真实控件都会带类位，所以 [isPasswordField] 对正常声明是够的；这一层是给畸形声明留的网：
      * 宿主只报 `TYPE_TEXT_VARIATION_PASSWORD`（`0x080`）、或把文本口令变体位配到别的类上

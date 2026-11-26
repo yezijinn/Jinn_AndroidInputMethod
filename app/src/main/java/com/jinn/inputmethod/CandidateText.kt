@@ -3,7 +3,7 @@ package com.jinn.inputmethod
 import kotlin.math.roundToInt
 
 /**
- * 候选文字字号（sp）：键盘外观页可调，**整个候选栏按它派生**。
+ * 候选文字字号（sp）：键盘外观页可调，整个候选栏按它派生。
  *
  * 语义：本值是**候选词**的字号（默认 28sp）；拼音条字号默认按 [PINYIN_RATIO] 派生
  * （默认档 28sp → 19.6sp）；栏高、行高、拼音条高度一律由 [CandidateRows]
@@ -110,7 +110,7 @@ object CandidateText {
         clampPinyinSp(MIN_PINYIN_SP + progress.coerceIn(0, PINYIN_PROGRESS_MAX) * STEP_PINYIN_SP)
 
     /**
-     * 拼音字号文案：**自动档显示派生值**（[autoValue] 的整数 + 「 sp」），否则显示用户的具体值。
+     * 拼音字号文案：自动档显示派生值（[autoValue] 的整数 + 「 sp」），否则显示用户的具体值。
      *
      * @param sp 用户参数（0 = 自动）
      * @param autoValue 自动档实际生效的拼音字号（通常传 [pinyinSpOf] 的结果）

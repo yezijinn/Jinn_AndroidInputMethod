@@ -183,12 +183,12 @@ internal object ConfigBackup {
     const val SEC_CLIPBOARD = "clipboard"
     const val SEC_DICTS = "dicts"
 
-    // ── 版本 ────────────────────────────────────────────────
+    // ── 版本 ──
 
     fun checkVersion(found: Int, supported: Int = FORMAT_VERSION): VersionCompat =
         if (found > supported) VersionCompat.TOO_NEW else VersionCompat.OK
 
-    // ── 摘要 ────────────────────────────────────────────────
+    // ── 摘要 ──
 
     /** 节摘要：manifest 里每节记一份，导入侧按它判内容是否被换过（小写十六进制） */
     fun sha256(text: String): String = sha256(text.toByteArray(Charsets.UTF_8))
@@ -198,7 +198,7 @@ internal object ConfigBackup {
             .digest(bytes)
             .joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
 
-    // ── manifest ─────────────────────────────────────────────
+    // ── manifest ──
 
     /** 把 [Manifest] 序列化成包内 `manifest.json` 用的可读 JSON 字符串（数字不引号、字符串转义） */
     fun encodeManifest(m: Manifest): String {
@@ -246,7 +246,7 @@ internal object ConfigBackup {
         )
     }.getOrNull()
 
-    // ── prefs ────────────────────────────────────────────────
+    // ── prefs ──
 
     /**
      * 编码 prefs：`{"<prefs 文件名>": {"<key>": {"t":"s","v":...}}}`。
@@ -327,7 +327,7 @@ internal object ConfigBackup {
                             null
                         }
                     }
-                    // Long 这里是 L-226 的**未闭半边**（2026-10-02 修复）：`toLong()` 会把 `1.5`
+                    // Long 这里是 L-226 的**未闭半边**（2026-10-02）：`toLong()` 会把 `1.5`
                     // 截成 1、把 `1e30` 饱和成 `Long.MAX_VALUE`。唯一消费者是 `update_last_check_at`，
                     // 被写坏后自动更新检查会长期失效（时间戳停在最大值），而用户完全看不到 ——
                     // 与 Int 分支同款判定：JSON 的整数形式直接取（无精度损失），浮点形式要求整数值
@@ -360,7 +360,7 @@ internal object ConfigBackup {
         }
         out
     }.getOrElse { e ->
-        // 结构非法（不是对象 / 空文本 / 数组 / 截断 JSON）**必须留痕**（2026-10-02 修复）：此前直接
+        // 结构非法（不是对象 / 空文本 / 数组 / 截断 JSON）**必须留痕**（2026-10-02）：此前直接
         // 回空表，而调用方把空表当「合法空配置」⇒ 用户看到「导入完成：设置 0 项」，与本文档
         // 「调用方按**缺失**处理」的承诺相反，排障时也没有任何线索。
         Diagnostics.w("ConfigBackup", "decodePrefs: 结构非法，按空表处理（${e.javaClass.simpleName}）")
@@ -376,7 +376,7 @@ internal object ConfigBackup {
         else -> "null"
     }
 
-    // ── 剪贴板 ────────────────────────────────────────────────
+    // ── 剪贴板 ──
 
     /** 剪贴板明文条目（迁移用；字段与 [ClipboardDb.Item] 对齐，但不含自增 id） */
     class ClipEntry(
@@ -467,7 +467,7 @@ internal object ConfigBackup {
         return out.sortedBy { it.createdAt }
     }
 
-    // ── 工具 ────────────────────────────────────────────────
+    // ── 工具 ──
 
     /** JSON 字符串转义：只处理必须转义的字符（控制字符走 \u 形式） */
     private fun escape(raw: String): String {

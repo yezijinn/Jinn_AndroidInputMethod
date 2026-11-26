@@ -121,7 +121,7 @@ object ThemeManager {
      *
      * 与 [isDark] 的分工：后者按 Prefs 现算决策，前者读 Context 自身 —— 对 [themedContext] 造出来的
      * Context（键盘视图的创建 Context）就是「这份色板属于哪一档」。
-     * **键盘选皮肤必须用这个**（见 `PinyinKeyboardView.syncKeyboardSkin`）：视图的色板是创建时刻
+     * 键盘选皮肤必须用这个（见 `PinyinKeyboardView.syncKeyboardSkin`）：视图的色板是创建时刻
      * 定死的，而换主题的重建可能被延后（`JinnIme.applyThemeIfNeeded` 遇未上屏输入 / 面板打开时
      * 只退出自己，随后 `configure()` 照常跑）。此刻若按现算决策取皮肤，令牌皮肤会拿着旧档色板画 ——
      * 暗档的原黑被画成白键面，日志却写着「原黑」。
@@ -218,7 +218,7 @@ object ThemeManager {
     }
 
     /**
-     * 定时换肤的准点定时器（**页面与键盘共用这一份**，见 `BUG.md` L-476）。
+     * 定时换肤的准点定时器（页面与键盘共用这一份，见 `BUG.md` L-476）。
      *
      * 为什么需要它：「到点」这件事与界面在不在前台无关 —— 页面停在屏幕上、键盘正显示着，
      * 都可能跨过切换点。此前 `SettingsActivity` / `KeyAppearanceActivity` / `JinnIme` 各写了一份，
@@ -230,7 +230,7 @@ object ThemeManager {
      *    于是这个延时只会落在边界**之后**、不会提前 —— 这一点是必需的：提前触发时
      *    [onSwitch] 会判定「还没到点」，而它接着会把下一次排到**下一个切换点**（12 小时后），
      *    等于整次切换被漏掉；
-     *  - 到点后**无条件续排**下一次；**是否真需要动界面由 [onSwitch] 自己判**（页面比调色板、
+     *  - 到点后**无条件续排**下一次；是否真需要动界面由 [onSwitch] 自己判（页面比调色板、
      *    键盘调 `JinnIme.applyThemeIfNeeded` 且它自己会跳过没变的），所以「档位没变」不会反复重建界面；
      *  - 模式与两个时刻在**每次排程时现读** [Prefs]：用户刚改完定时时刻，下一次排的就是新值。
      *
@@ -241,7 +241,7 @@ object ThemeManager {
         private val handler = Handler(Looper.getMainLooper())
 
         private val tick = Runnable {
-            // onSwitch 必须兜住（2026-10-03 修复 L-674）：两条链分别是 activity.recreate() 与
+            // onSwitch 必须兜住（2026-10-03，L-674）：两条链分别是 activity.recreate() 与
             // JinnIme.recreateKeyboardView()，异常抛到主 Looper 会崩掉设置页 / 正在打字的 IME 进程；
             // 且异常发生在 schedule() 之前，一次就把续排链打断 ⇒ 到点不再换色直到下次 onStart。
             runCatching { onSwitch() }.onFailure { Diagnostics.w("ThemeManager", "定时换色失败: " + it.javaClass.simpleName) }

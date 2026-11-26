@@ -16,7 +16,7 @@ import android.widget.Spinner
 import android.widget.TextView
 
 /**
- * 「翻译原文范围」设置页：**每家服务方独立配置**
+ * 「翻译原文范围」设置页：每家服务方独立配置
  * ① 「哪些内容算翻译原文」（[TranslationScope] 四选一）；② 单次翻译的字节上限。
  *
  * 生效方式：IME 每次点「翻译」都从 [Prefs] 现读这两项（`translateScopeOf` / `translateMaxBytesOf`），
@@ -32,7 +32,7 @@ class TranslationSourceActivity : Activity() {
     private lateinit var spinnerProvider: Spinner
     private lateinit var groupScope: RadioGroup
     /**
-     * 单选按钮 ↔ 范围的**显式映射**（2026-10-02 修复 L-436）。
+     * 单选按钮 ↔ 范围的**显式映射**（2026-10-02，L-436）。
      *
      * 此前标签按 `TranslationScope.entries` 的**下标**写、提交按 `radios.indexOfFirst{id}` 读，
      * 两者只在「布局顺序 == 枚举顺序」时一致 —— 重排布局里四个 RadioButton（改 UI 最常见的动作）
@@ -185,14 +185,14 @@ class TranslationSourceActivity : Activity() {
     /** 离开页面即落盘并等一次写入（理由见类注释；[Prefs.flush] 与凭据页同款） */
     override fun onPause() {
         super.onPause()
-        // 导入进行中一律不回写（2026-10-02 修复 L-405）：本页无条件写 scope / maxBytes，
+        // 导入进行中一律不回写（2026-10-02，L-405）：本页无条件写 scope / maxBytes，
         // 与导入线程写同一份 Prefs ⇒ 交错时界面旧值会覆盖刚导入的值。
         if (ConfigBackupManager.importing) {
             Diagnostics.w(TAG, "onPause: 导入进行中，跳过原文范围/上限回写（避免覆盖导入结果）")
         } else {
             // 只有真的写过才同步落盘（BUG.md L-253）：`Prefs.flush` 是 `commit()`，无改动也照写整份 XML
             val wrote = saveMaxBytes()
-            // 落盘失败要留痕（2026-10-02 修复 L-407）：`commit()` 返回 false 是**正常返回值**
+            // 落盘失败要留痕（2026-10-02，L-407）：`commit()` 返回 false 是**正常返回值**
             // （磁盘满 / 只读挂载），不抛异常 —— 丢弃返回值会让「看着改了、重启后回退」完全无声
             if (wrote && !prefs.flush()) Diagnostics.w(TAG, "onPause: 原文范围/上限落盘失败（改动可能回退）")
         }
@@ -220,7 +220,7 @@ class TranslationSourceActivity : Activity() {
      */
     private fun saveMaxBytes(): Boolean {
         val raw = editMaxBytes.text?.toString()?.trim().orEmpty()
-        // 0 / 负数视为「恢复默认」（2026-10-01 修复 L-257）：以前填 0 会被钳到 1，该家变成
+        // 0 / 负数视为「恢复默认」（2026-10-01，L-257）：以前填 0 会被钳到 1，该家变成
         // 「每次只翻 1 字节」，界面只回填一个 1 且没有任何解释，用户难以归因
         val parsed = raw.toIntOrNull()?.takeIf { it >= TranslationText.MIN_MAX_BYTES }
         val target = parsed ?: currentId.defaultMaxBytes

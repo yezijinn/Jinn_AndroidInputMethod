@@ -58,7 +58,7 @@ internal object ClipboardFileImporter {
     /**
      * 一块多少条写进**一个事务**（BUG.md L-1536）。
      *
-     * 取 [TRIM_EVERY] 同值只是让「一块 = 一次裁剪」可预测；**裁剪落在事务之外靠的是调用点顺序**
+     * 取 [TRIM_EVERY] 同值只是让「一块 = 一次裁剪」可预测；裁剪落在事务之外靠的是调用点顺序
      * （`ClipboardStore.saveChunk` 返回之后才 `trimTo`），与本值与块大小是否相等无关 ——
      * 裁剪的计数在 `runImport` 里按**成功条数**累加，所以两者解绑也不会把裁剪塞进事务，
      * 也不会多裁几次（总次数恒为 ⌊新增数 / TRIM_EVERY⌋）。
@@ -115,7 +115,7 @@ internal object ClipboardFileImporter {
      * 调用前必须已确认剪贴板总开关为开：关着导入没有意义（面板 / 搜索都不工作），
      * 由界面侧先拦并提示（[ClipboardPrefs.enabled]）。
      *
-     * **任何异常都收成 [Result]，不向上抛**：本函数在后台线程跑，线程级兜底（`BackgroundIo.wrapped`）
+     * 任何异常都收成 [Result]，不向上抛：本函数在后台线程跑，线程级兜底（`BackgroundIo.wrapped`）
      * 只记日志、不回界面 —— 异常逃出去会让调用方的「导入中」标志永不复位，按钮此后连点毫无反馈地
      * 失效。异常在这里自己记一条 E（带栈，线程兜底不会再看到它）；已入库的部分保留
      * （判重按内容哈希，重导安全且幂等）。
@@ -205,7 +205,7 @@ internal object ClipboardFileImporter {
          * 一行的入库动作改成「攒够 [IMPORT_CHUNK_ROWS] 行写一次」（BUG.md L-1536）：
          * 入参是**同序**的行文本，返回**同序**的「是否入库成功」（长度不足按失败算）。
          *
-         * 为什么不是「一行一个回调」：回调返回布尔值意味着**写库已经在回调里做完了**，
+         * 为什么不是「一行一个回调」：回调返回布尔值意味着写库已经在回调里做完了，
          * 那样每条仍是一个隐式事务（一万行 = 一万次提交）。攒块之后每条的处理顺序、
          * 判重依据（[knownHashes] 仍逐行即时更新）、中止条件的位置都**原封不动**，
          * 变的只是提交粒度。
@@ -330,7 +330,7 @@ internal object ClipboardFileImporter {
         return StreamResult(lines, added, duplicate, tooLong, blank, failed, abort)
     }
 
-    // ── 行级有界读取 ────────────────────────────────────────
+    // ── 行级有界读取 ──
 
     /**
      * 逐行读取；单行超 [maxLineBytes] 时**丢弃该行内容**并继续消耗到行尾（不返回半截）。

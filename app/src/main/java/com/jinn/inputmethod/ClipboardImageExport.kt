@@ -128,7 +128,7 @@ internal object ClipboardImageExport {
      * 把一条图片写进 SAF 目录树（「转移到图库目录」与「导出全部图片」共用这一处）。
      *
      * 两条出库路径踩的是同一批坑：`createDocument` 返回 null / 流打不开 / 写入中途失败，
-     * **都要删掉刚建的半截文档**（BUG.md L-1301）—— 残留物在用户自己的目录里（不是私有缓存），
+     * 都要删掉刚建的半截文档（BUG.md L-1301）—— 残留物在用户自己的目录里（不是私有缓存），
      * 提示却说「失败」，用户以为什么都没发生，实际每失败一次就多一个打不开的文件
      * （文件名精确到毫秒，不会互相覆盖）。
      *
@@ -269,7 +269,7 @@ internal object ClipboardImageExport {
             // newUri 会走 resolver.getType：provider 异常时同样要落到下面的清理分支
             val clip = android.content.ClipData.newUri(context.contentResolver, CLIP_LABEL, uri)
             manager.setPrimaryClip(clip)
-            // 复制成功 = 这个文件又被用了一次（A-746）：系统剪贴板里存的是它的 URI，宿主稍后
+            // 复制成功 = 这个文件又被用了一次：系统剪贴板里存的是它的 URI，宿主稍后
             // 才去读。刷新 mtime 让「最近两张」的位置保护把它重新算进去，否则下一次入档的
             // trimCache 会按创建时刻把它当最旧的删掉，长按粘贴就得到一张裂图。
             runCatching { file.setLastModified(System.currentTimeMillis()) }
@@ -321,7 +321,7 @@ internal object ClipboardImageExport {
     /**
      * 「收藏并移出」成功的回执文案（收藏 + 移出 + 从历史移除三件事都说全）。
      *
-     * 面板与历史页**共用这一处字面量**：两份各写一份时会「改一处漏一处」——面板那句原先少了
+     * 面板与历史页共用这一处字面量：两份各写一份时会「改一处漏一处」——面板那句原先少了
      * 「并从历史移除」，用户以为记录还在（`BUG.md` L-1335）。
      */
     const val TEXT_FAV_MOVED = "已收藏，原图已移到图库目录（明文），并从历史移除"
@@ -329,7 +329,7 @@ internal object ClipboardImageExport {
     /**
      * 「收藏并移出」**失败**的回执（动作没白做：原图仍加密保存在历史里）。
      *
-     * 与 [TEXT_FAV_MOVED] 同源：面板与历史页**共用这一处字面量**，避免「改一处漏一处」（`BUG.md` L-1346）。
+     * 与 [TEXT_FAV_MOVED] 同源：面板与历史页共用这一处字面量，避免「改一处漏一处」（`BUG.md` L-1346）。
      */
     const val TEXT_FAV_MOVE_FAILED = "已收藏，但移到图库目录失败（原图仍加密保存在历史里）"
 

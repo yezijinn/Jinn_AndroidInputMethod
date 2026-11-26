@@ -16,7 +16,7 @@ import android.content.Context
  *  - **只对 ≥ [SCALE_THRESHOLD_BYTES] 的项生效**：当前三处调用（缩略图缓存 12MB ×2、图库缓存 60MB）
  *    都超过阈值；更小的零星预算不接本入口，避免无收益的折半；
  *  - **高配一侧不放宽**：非低配直接返回原值，本入口从不调大任何预算；
- *  - **不碰 Binder 事务上限与剪贴板解密窗口**：那两项的约束来自系统（1MB 事务 / GCM 单次解密），
+ *  - 不碰 Binder 事务上限与剪贴板解密窗口：那两项的约束来自系统（1MB 事务 / GCM 单次解密），
  *    与设备档位无关，调用方不得把它们接进来。
  *
  * 判据来源是系统自报（`ro.config.low_ram` / `ActivityManager.isLowRamDevice`），

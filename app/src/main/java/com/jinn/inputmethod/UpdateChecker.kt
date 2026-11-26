@@ -101,7 +101,7 @@ object UpdateChecker {
      * 自动检查是后台行为，用户没在等它；手机用流量、靠电池时不该为一次版本检查付流量与唤醒。
      * CONNECTIVITY_SERVICE 取不到、或判定过程抛异常时**放行**（宁可多跑一次，也不要让功能静默失效）；
      * 但确认无活跃网络、无 INTERNET 能力时拒绝（此时没有网络，跑也无用）。
-     * **手动检查不经过这里** —— 用户明确点了按钮，就该立刻发请求。
+     * 手动检查不经过这里 —— 用户明确点了按钮，就该立刻发请求。
      */
     internal fun autoCheckNetworkOk(context: Context): Boolean = runCatching {
         val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE)
