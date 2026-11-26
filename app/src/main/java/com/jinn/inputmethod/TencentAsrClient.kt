@@ -17,8 +17,8 @@ import javax.crypto.spec.SecretKeySpec
  * 传输模型与 [OpenAiAsrClient] 同类（本地缓冲整段 → 松手一次性上传），缓冲 / 线程 / 取消 / 超时
  * 全在基类 [BufferedBatchAsrClient]；本类只负责 TC3 签名、请求体与回包解析。
  *
- * 鉴权是 **TC3-HMAC-SHA256**（[TencentTc3]，纯函数）：`Authorization` 头里的日期必须由
- * `X-TC-Timestamp` 按 **UTC** 换算 —— 东八区凌晨本地已是次日，用本地时区会多算一天，签名当场 InvalidParameter。
+ * 鉴权是 TC3-HMAC-SHA256（[TencentTc3]，纯函数）：`Authorization` 头里的日期必须由
+ * `X-TC-Timestamp` 按 **UTC** 换算 —— 东八区凌晨本地已是次日，用本地时区会多算一天，签名当场 `InvalidParameter`。
  *
  * 服务端限制：单次 ≤60 秒、≤3MB（16k / 单声道 / 16bit 的 60 秒正好 1.92MB，留有余量），
  * 本应用按既有 58 秒收尾（[Prefs.voiceBackend] 属在线后端，见 `JinnIme.autoStopDelayMs`）。

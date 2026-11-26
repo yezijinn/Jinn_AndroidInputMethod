@@ -54,7 +54,7 @@ class AsrClient(
      *
      * 原先每包现读 `prefs.prompt` / `prefs.language`（两次 SharedPreferences 内存读），
      * 而音频包每秒可达 10 条。更要紧的是**一致性**：用户在录音途中改配置，
-     * 若逐包现读，同一段听写会带着新旧两套 prompt 发出 —— 服务端按**每包自带的** `context`
+     * 若逐包现读，同一段听写会带着新旧两套 prompt 发出 —— 服务端按每包自带的 `context`
      * 逐段提交识别，同一段听写于是前后口径不同。
      *
      * 刷新点放在 [connect] 与 [beginTask]（不是每包）：前者覆盖建连与重连（含地址变更），

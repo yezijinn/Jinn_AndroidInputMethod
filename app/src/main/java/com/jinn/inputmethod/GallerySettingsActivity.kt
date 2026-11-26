@@ -24,7 +24,7 @@ class GallerySettingsActivity : ComponentActivity() {
     /**
      * 两行数值标签，在 [onCreate] 里取一次并缓存。
      *
-     * 拖动回调里不再 findViewById：`setProgress` 会**同步**回调 `onProgressChanged`，
+     * 拖动回调里不再 `findViewById`：`setProgress` 会**同步**回调 `onProgressChanged`，
      * 缓存并判空后，取不到也只留一条日志，不会在回调里 NPE。
      */
     private var textColumns: TextView? = null
@@ -47,9 +47,9 @@ class GallerySettingsActivity : ComponentActivity() {
         }
         val prefs = Prefs(this)
         val previous = prefs.galleryTreeUri
-        // 先写新绑定再还旧授权：旧目录从此不再被本应用读到。同一条目录重绑时不还 ——
+        // 先还旧授权再写新绑定：旧目录从此不再被本应用读到。同一条目录重绑时不还 ——
         // 还掉等于撤销刚拿到的授权，面板会立刻读不到内容。
-        // 读、写两位都要 take：图库面板只读图，而「转移到图库目录」要在同一棵树下 createDocument。
+        // 读、写两位都要 take：图库面板只读图，而「转移到图库目录」要在同一棵树下 `createDocument`。
         // 只 take 读位时当次进程靠临时授权尚可写，进程重建后写必然失败；provider 只给读位时
         // 降级为只读并留痕，不假装拿到了写权限。
         val rwFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -63,7 +63,7 @@ class GallerySettingsActivity : ComponentActivity() {
             Diagnostics.w(TAG, "目录授权只拿到读位，转图库不可用 provider=${uri.authority}")
         }
         // 拿不到持久授权就不能落绑定：新目录只靠临时授权，重启后必然失效，面板读不到且无入口可修。
-        // 与导出目录（ClipboardHistoryActivity）同口径：失败即提示并保留原状。
+        // 与导出目录（ClipboardHistoryActivity）同是失败保留原状：那边还弹提示，本页只留日志并重画。
         if (!granted) {
             Diagnostics.w(TAG, "目录: 未拿到持久授权，保留原绑定 provider=${uri.authority}")
             render()
