@@ -7,7 +7,20 @@ import java.io.File
  * 连续选词自造词组表（P0）。
  *
  * 词频按词面重排已有候选；本表按拼音键新增词库没有的词。
- * 整份 AEAD，复用 [LedgerCrypto] 的 DEK；不进系统备份 / 配置包 / 诊断包。
+ *
+ * 存储：`filesDir/user_phrases.txt`，整份 AES-256-GCM，复用 [LedgerCrypto] 的 DEK；
+ * 首行 `#jinn-phrase1`，其后一行密文，明文每行 `词<TAB>拼音键<TAB>权重`。
+ * 空文件 / 无首行标识按空表处理；密钥不可用 / 解不开置 loadBlocked，按空表处理且不覆盖。
+ * 不进系统备份 / 配置包 / 诊断包；随应用卸载清除。
+ *
+ * 上限：词 ≤8 字、键 ≤32 字，超限直接拒；总 1000 条，超出淘汰权重最低；同键最多注入 2 条。
+ *
+ * 简繁：只存当时的显示词，不归一；查询侧先 `toSimplified` 归一到简体再展示，
+ * 存量繁体词与新增数据同修。
+ *
+ * 开关（[Prefs.userPhraseEnabled]，默认开）：关闭时 [forPinyin] 返回空、[offer] 不写。
+ *
+ * 密钥不可用 / 解不开时 fail-closed：不写空表、不写明文；成词时补读一次求自愈。
  */
 internal object UserPhrases {
 
