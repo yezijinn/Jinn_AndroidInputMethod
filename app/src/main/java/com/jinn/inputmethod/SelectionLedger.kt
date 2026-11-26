@@ -619,14 +619,14 @@ object SelectionLedger {
         /** 读成功（含「文件不存在」= 确实没有记录） */
         class Ok(val picks: List<Pair<String, String>>) : LedgerRead()
 
-        /** 读不出：数据密钥不可用 / 读取或迁移抛出。盘上可能有数据，界面不得按 0 条统计 */
+        /** 读不出：数据密钥不可用 / 密文全解不开 / 读取或迁移抛出。盘上可能有数据，界面不得按 0 条统计 */
         object Unavailable : LedgerRead()
     }
 
     /**
      * 读整份流水（文件不存在返回空表）；解析口径与 [parse] 一致。
      *
-     * 密钥不可用时返回 [LedgerRead.Unavailable] 并留痕：**不能**把「解不开」当成「没有数据」
+     * 读不出时返回 [LedgerRead.Unavailable] 并留痕：**不能**把「解不开」当成「没有数据」
      * 写进统计；密钥就绪但迁移未完成（磁盘满 / 无权限）时文件仍是旧明文，按明文读以保数据可见。
      */
     fun readAll(context: Context): LedgerRead = readAllIn(context.filesDir)

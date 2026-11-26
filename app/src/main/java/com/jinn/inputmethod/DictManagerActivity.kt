@@ -627,7 +627,12 @@ class DictManagerActivity : Activity() {
      *
      * 恢复线程写的是同一个 `custom_user.txt.xz`（`RESTORE_SUFFIX` 临时名 → rename），
      * 与导入 / 快捷补充保存的 `.tmp` → rename 撞在同一目标上：用户在恢复期间保存，界面提示
-     * 「已保存」而内容可能被恢复包里的旧版静默盖掉。四个设置页早已有同款守卫，词库两页漏了。
+     * 「已保存」而内容可能被恢复包里的旧版静默盖掉。
+     *
+     * 删除同样要挡：恢复先把文件攒成 `*.restore`、校验通过才改名，落盘前按 `dest.isFile` 判重。
+     * 恢复期间删掉目标，等于抽掉判重依据，备份里的旧版会被静默请回。
+     * 设置页与词库页现都过此守卫：本页覆盖导入 / 快捷补充 / 下载 / 删可选包，
+     * 以及删自定义词库、删旧包的入口与动手前各一次；快捷补充页保存时另判。
      */
     private fun blockedByConfigImport(): Boolean {
         if (!ConfigBackupManager.importing) return false

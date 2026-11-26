@@ -378,7 +378,8 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         // 连点第二下不动作，也就不该响
         KeyFeedback.fire(TapSound.G_TEXT)
         // ⚠ 必须 try/finally：宿主的提交链没有兜异常，一次上抛就会让 isPasting 永久为 true，
-        // 本会话内之后**所有**结果点击都静默无效（只有重开面板才复位）
+        // 没有 finally 时它永久为 true：本会话内之后**所有**结果点击都静默无效，
+        // 只能等面板显示 / 隐藏时那两次复位兜住。
         val ok = try {
             listener?.onPaste(item.content) ?: false
         } finally {
