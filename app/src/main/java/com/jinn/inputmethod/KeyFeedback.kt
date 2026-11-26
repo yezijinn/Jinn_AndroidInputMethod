@@ -119,7 +119,7 @@ internal object KeyFeedback {
     }
 
     /**
-     * 刷新用户意愿（设置页改动后调用；[JinnIme.onKeyFeedbackChanged] 是唯一入口）。
+     * 刷新用户意愿。四处调用：[JinnIme] 挂载 / 弹键盘、[JinnIme.onKeyFeedbackChanged] 与设置页 [TapSoundActivity] 重绘。
      *
      * 只读缓存字段，不做 IO：映射串已被 [Prefs.tapSoundMap] 归一过，这里再解析一次是防御。
      */
@@ -133,7 +133,8 @@ internal object KeyFeedback {
     }
 
     /**
-     * 重读系统闸门。调用点：挂载时 + 每次键盘显示（[JinnIme.onStartInputView]）——
+     * 重读系统闸门。覆盖点：挂载时、每次键盘显示（[JinnIme.onStartInputView]，经 `ui.post` 移出首帧）、
+     * 响铃模式变化广播（[JinnIme] 注册 `RINGER_MODE_CHANGED_ACTION`）；设置页重绘也会调一次。
      * 用户去系统设置改完开关再回来必然生效，而按键路径上一次 IPC 都不做。
      */
     fun refreshSystemGates(context: Context) {

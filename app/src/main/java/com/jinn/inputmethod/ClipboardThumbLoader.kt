@@ -26,7 +26,7 @@ internal object ClipboardThumbLoader {
 
     private const val THUMB_THREADS = 3
 
-    /** 加载失败的负结果存活时长（BUG.md L-1237）：读不出/解不开的图在窗口内不再反复排队 */
+    /** 加载失败的负结果存活时长（BUG.md L-1237）：读取 / 解密 / 解码三路失败的图，窗口内不再反复排队 */
     private const val FAIL_TTL_MS = 10_000L
 
     /** 加载失败的负缓存（键 → 失败时刻）：滚动复用会让读不出的图被反复请求；读取/解密/解码三路共用 */

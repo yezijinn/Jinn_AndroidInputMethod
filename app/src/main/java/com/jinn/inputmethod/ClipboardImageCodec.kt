@@ -149,7 +149,7 @@ internal object ClipboardImageCodec {
      * 尺寸读不出时 [rawBounds] 返回 null，直接给 null；`BitmapFactory.decodeByteArray` 解不出
      * 像素（损坏 / 不支持的格式）也返回 null —— 交给调用方按解码失败显示灰块。
      *
-     * [targetPx] 是单元格长边（像素），解码结果供 `centerCrop` 缩放 —— 这里不做二次缩放，
+     * [targetPx] 是单元格短边（像素，实测格宽与行高取小），解码结果供 `centerCrop` 缩放 —— 这里不做二次缩放，
      * 交给 ImageView 的 scaleType（与图库面板同款，省一次全尺寸位图分配）。
      */
     fun decodeForTarget(bytes: ByteArray, targetPx: Int): Bitmap? = runCatching {
