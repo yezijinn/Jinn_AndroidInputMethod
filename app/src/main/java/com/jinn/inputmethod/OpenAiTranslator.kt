@@ -148,7 +148,7 @@ internal class OpenAiTranslator(private val config: OpenAiConfig) : TranslationP
         // 输出被上限截断时**不能算成功**（2026-10-02，L-484）：
         // `finish_reason == "length"` 表示模型输出被 `max_tokens`（或网关自带上限）砍断 ——
         // 拿它上屏等于把**半句话**写进用户正文，且毫无提示（用户只会以为模型翻得烂）。
-        // 归 PARAM 而不是 SERVER：这是「调用方参数（输出上限）太小」，不是服务端故障。
+        // 归专有的 TRUNCATED 而不是 SERVER：这是「调用方输出上限太小」，不是服务端故障。
         val finishReason = json.optJSONArray("choices")
             ?.optJSONObject(0)
             ?.optString("finish_reason")
