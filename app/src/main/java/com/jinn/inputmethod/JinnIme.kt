@@ -117,7 +117,8 @@ class JinnIme : InputMethodService() {
     private var pendingSymbolLayoutRebuild = false
 
     /**
-     * 本次会话的「敏感输入框不学习」判定（由 [onStartInputView] 按 EditorInfo 算出）。
+     * 本次会话的「敏感输入框不学习」判定（由 [onStartInput] 与 [onStartInputView]
+     * 各按 EditorInfo 算一次）。
      *
      * 抑制标记本体是**视图上的字段**（`PinyinKeyboardView.suppressLearning`，声明处默认 false），
      * 而视图重建（换肤 / 符号布局变更）会整只换掉它 ⇒ 重建后必须重放这个值，

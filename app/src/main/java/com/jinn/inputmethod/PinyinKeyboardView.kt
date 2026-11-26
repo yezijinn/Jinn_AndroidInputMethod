@@ -4553,18 +4553,6 @@ class PinyinKeyboardView @JvmOverloads constructor(
         listener?.onVoiceHoldEnd(cancelled)
     }
 
-    /**
-     * 自然码双拼键位提示：键面下方显示该键对应的韵母。
-     *  - Y/S/D 双韵母分行（`\n` 分隔，一行一个）
-     *  - u/i/v 键下方韵母（v 键的 ui 在这里，zh 走红色 [shuangpinRedHint]）
-     *  - e/a/u/i 键不显示韵母提示
-     */
-    /**
-     * 分号键触摸：按下即把一个分号补进拼音串（它是搜狗/微软/紫光方案里 `ing` 的韵母键）。
-     *
-     * 与字母键一样由外部触摸驱动按压态（OnTouchListener 返回 true 后 PinyinKey.onTouchEvent
-     * 不再执行），因此这里显式调 setPressedVisual。
-     */
     /** 分号键上屏（触摸抬起与无障碍激活共用；可见性 / 命中判定由各自入口负责） */
     private fun onSemicolonPressed() {
         composing.append(SEMICOLON_KEY)
@@ -4572,6 +4560,11 @@ class PinyinKeyboardView @JvmOverloads constructor(
         if (Diagnostics.KEY_TRACE) Diagnostics.v(TAG, "分号键(ing): 拼音串=$composing")
     }
 
+    /**
+     * 分号键触摸：按压态由外部触摸驱动（OnTouchListener 返回 true 后 PinyinKey.onTouchEvent
+     * 不再执行），因此这里显式调 setPressedVisual；抬起且命中时走 [onSemicolonPressed] 上屏。
+     * 它是搜狗/微软/紫光方案里 `ing` 的韵母键（键面提示见 [refreshSemicolonKey]）。
+     */
     private fun handleSemicolonTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
