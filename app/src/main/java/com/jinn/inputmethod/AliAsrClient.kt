@@ -88,7 +88,7 @@ class AliAsrClient(
      * 本次连接使用的模型名：在 [connect] 校验时缓存。
      *
      * 不在各调用点现读 [Prefs.aliModel]：凭据读取可能因锁屏 / Keystore 暂时返回空串，
-     * 那样会在会话中途发出没有 model 的 run-task，被服务端当场拒绝。
+     * 那样会在会话中途发出没有 model 的 `run-task`，被服务端当场拒绝。
      */
     @Volatile
     private var sessionModel: String = ""
@@ -233,9 +233,9 @@ class AliAsrClient(
             connect(force = true, userInitiated = true)
             return null
         }
-        // 标记「这条连接已经用过」：在它等到 task-finished 之前不许再发第二个 run-task
+        // 标记「这条连接已经用过」：在它等到 `task-finished` 之前不许再发第二个 `run-task`
         sessionStarted = true
-        // 音频泵等 task-started 再启动；等不到就当场失败，别让状态条永远停在「识别中」
+        // 音频泵等 `task-started` 再启动；等不到就当场失败，别让状态条永远停在「识别中」
         timeoutHandler.removeCallbacks(startTimeoutRunnable)
         timeoutHandler.postDelayed(startTimeoutRunnable, START_TIMEOUT_MS)
         Diagnostics.i(TAG, "beginTask: $id")
@@ -257,12 +257,12 @@ class AliAsrClient(
     override fun cancelTask(): Boolean = finishTask(acceptResult = false)
 
     /**
-     * 收尾：冲掉队列余量 → 发 finish-task → 等 `task-finished`。
+     * 收尾：冲掉队列余量 → 发 `finish-task` → 等 `task-finished`。
      *
      * 余量不按 100ms 节拍等：用户已经松手，多等只是白延迟；服务端按收到的总字节数解码，
      * 连发不会丢音频。`task-finished` 才是「这段结果到此为止」的信号。
      *
-     * `taskId == null` 的两种含义必须分开：从没开过任务 → false；[endTask] 已经发过 finish-task、
+     * `taskId == null` 的两种含义必须分开：从没开过任务 → false；[endTask] 已经发过 `finish-task`、
      * 只剩等 `task-finished` → 取消仍要能关掉采纳闸门，否则「松手后再取消」形同虚设，
      * 晚到的定稿照常上屏（[BufferedBatchAsrClient] 与另两家流式实现同一口径）。
      */
@@ -287,12 +287,12 @@ class AliAsrClient(
         // 先切「是否采纳结果」再发末帧：末帧一发出服务端就可能抢答，
         // 取消路径若等到发送之后才置空，那一两条回包会漏过闸门被当成正常结果显示。
         acceptingTask = if (acceptResult) id else null
-        // 「还在等 task-finished」同样必须在发帧**之前**置位：回包可能比下一行执行得还快，
-        // 反过来的话 task-finished 会先把它清掉、这里又置回 true —— 超时回调随后把刚成功的那一段
+        // 「还在等 `task-finished`」同样必须在发帧**之前**置位：回包可能比下一行执行得还快，
+        // 反过来的话 `task-finished` 会先把它清掉、这里又置回 true —— 超时回调随后把刚成功的那一段
         // 覆盖成「等待识别结果超时」。发送失败时 clearTask() 会把它一起清掉。
         awaitingFinish = true
-        // 极短的一次按键可能还没等到 task-started：那时发二进制帧就是协议错，
-        // 只发 finish-task 让服务端正常结束这一段（结果为空 → 「没听到语音」，不是「连不上」）
+        // 极短的一次按键可能还没等到 `task-started`：那时发二进制帧就是协议错，
+        // 只发 `finish-task` 让服务端正常结束这一段（结果为空 → 「没听到语音」，不是「连不上」）
         if (started) flushQueue(current)
         val ok = current.send(AliAsrProtocol.finishTaskMessage(id))
         taskId = null
@@ -425,7 +425,7 @@ class AliAsrClient(
     }
 
     private fun onFinishTimeout() {
-        // 判据是「已发 finish-task 还在等」，不是 acceptingTask：取消路径早就把它置空了，
+        // 判据是「已发 `finish-task` 还在等」，不是 `acceptingTask`：取消路径早就把它置空了，
         // 那样超时分支会直接退出，连接再也关不掉
         if (!awaitingFinish) return
         Diagnostics.w(TAG, "等 task-finished 超时")
@@ -549,7 +549,7 @@ class AliAsrClient(
         cancelPump()
         cancelTimeouts()
         // 连接马上要断，空闲兜底无需再留着：真让它到点，90s 后那次 updateState(IDLE)
-        // 会把刚写好的 error_code / error_message 覆盖成「未连接」（排障线索被自己抹掉）
+        // 会把刚写好的 `error_code` / `error_message` 覆盖成「未连接」（排障线索被自己抹掉）
         cancelIdleClose()
         clearTask()
         updateState(LinkState.OFFLINE, detail)
@@ -568,10 +568,10 @@ class AliAsrClient(
         accumulator = null
         pumpRunning = false
         queue.clear()
-        // 任务状态一起收：连接断开（`onFailure` / `onClosed`）也要把「还在等 task-finished」清掉，
+        // 任务状态一起收：连接断开（`onFailure` / `onClosed`）也要把「还在等 `task-finished`」清掉，
         // 否则 `awaitingFinish` 会留在 true 而 socket 已是 null —— 判据与连接状态脱节。
         // ⚠ 只清这一项：`sessionStarted` 是**连接**状态，不是任务状态，绝不许搬到这里复位
-        // （在 clearTask 里把它复位 = 用过的连接又能跑第二个 run-task，旧任务与后续音频会互相撞毁）。
+        // （在 clearTask 里把它复位 = 用过的连接又能跑第二个 `run-task`，旧任务与后续音频会互相撞毁）。
         awaitingFinish = false
     }
 
@@ -580,7 +580,7 @@ class AliAsrClient(
     private fun closeSocket() {
         val current = socket
         socket = null
-        // 连接一拆就不再等 task-finished 了：所有收尾路径（失败 / 超时 / 主动关闭 / 预连）都经过这里
+        // 连接一拆就不再等 `task-finished` 了：所有收尾路径（失败 / 超时 / 主动关闭 / 预连）都经过这里
         awaitingFinish = false
         // 先置 null：旧 listener 的 onClosed / onFailure 会因 webSocket !== socket 提前返回
         runCatching { current?.close(NORMAL_CLOSURE, null) }

@@ -22,7 +22,7 @@ import javax.crypto.SecretKey
  * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，解析时按天衰减后低于 [MIN_WEIGHT] 的
  * 条目被跳过，文件稳定在几十 KB。
  *
- * 落盘是整份加密的（[LedgerCrypto] 的行级 AEAD，密钥与台账共用）：
+ * 落盘是整份加密的（复用 [LedgerCrypto] 的 AEAD，密钥与台账共用）：
  * `#jinn-freq1` + 一行 `1:base64(iv||密文)`，密文里才是上面那份明文。为什么这里能整份加密、
  * 台账不能：这里上限 3000 行、写盘本身就有 2 秒防抖，一次「解密 → 改 → 加密 → 原子替换」
  * 只有 0.2ms 量级（量级估计，非实测）；台账只增不删、可能几万行，整表重写会把一次按键放大成几 MB 的读写。
@@ -380,7 +380,7 @@ internal object UserFrequency {
     /**
      * 距下次允许落盘还需等多少毫秒（纯函数，便于单测）；0 表示当前即可写。
      *
-     * 上限钳到 [window]：系统时钟回拨会让 `lastSaveAt` 落在「未来」，差值可达小时级 ，
+     * 上限钳到 [window]：系统时钟回拨会让 `lastSaveAt` 落在「未来」，差值可达小时级，
      * 不钳的话等于这段时间内完全不再落盘。
      */
     internal fun saveDelayMs(now: Long, lastSaveAt: Long, window: Long): Long =
@@ -477,7 +477,7 @@ internal object UserFrequency {
         // 关闭学习后不写（BUG.md L-1274）：关闭时内存表已清空，此时写盘会把文件清成空表
         if (!enabled) return true
         if (!dirty) return true
-        // 这里同步写：只在 onDestroy / 切后台这种一次性收尾时调用，丢给 BackgroundIo 的话，
+        // 这里同步写：在收尾与备份导出 / 导入前调用，丢给 BackgroundIo 的话，
         // 服务销毁后进程可能马上被杀、任务来不及跑，最后几次学习就白记了。
         // 文件最多 3000 行，主线程写一次 1~3ms，可以接受。渲染同样放在锁内（见 [saveNow]）。
         //
@@ -512,7 +512,7 @@ internal object UserFrequency {
     fun rank(words: Array<String>): Array<String> = rank(words) { it }
 
     /**
-     * 带 key 映射的重载：「只使用繁体字」模式下候选是繁体、词频表按简体存储（2026-09-27），
+     * 带 key 映射的重载：「只使用繁体字」模式下候选是繁体、词频表按简体存储（2026-09-27 起），
      * 于是按 [keyOf] 转换后的简体形式查权重，返回的仍是候选原样（顺序变了、内容不变）。
      */
     fun rank(words: Array<String>, keyOf: (String) -> String): Array<String> {
@@ -581,7 +581,7 @@ internal object UserFrequency {
             if (parts.size < 3) continue
             val word = parts[0]
             // 键必须已是「规范化」形式（调用方传 `PinyinEngine::toSimplified`；BUG.md L-54）：
-            // 修复 toSimplified（2026-09-27）之前，繁体模式下学过的词存的是「头髮」这类折不回简体的键
+            // toSimplified（2026-09-27 修复）之前，繁体模式下学过的词存的是「头髮」这类折不回简体的键
             // ⇒ 升级后它们不再被任何候选匹配（无害但占空间），顺手丢弃即为清洗路径。
             // 默认参数是恒等函数：纯函数单测与「没有归一化器」的调用方行为不变。
             if (normalize(word) != word) continue
@@ -804,7 +804,7 @@ internal object UserFrequency {
     }
 
     /**
-     * 配置备份**导出**专用：把词频文件读成**明文**（包内条目必须是明文）。
+     * 配置备份导出专用：把词频文件读成**明文**（包内条目必须是明文）。
      *
      * @return 明文；文件不存在返回空串；读不出 / 解不开返回 null ——
      *   调用方必须据此中止导出，静默按「空节」导出会让用户以为备份完整，换机后这部分全丢

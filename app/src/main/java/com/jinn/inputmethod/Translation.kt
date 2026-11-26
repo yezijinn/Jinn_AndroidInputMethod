@@ -243,7 +243,8 @@ internal sealed interface TranslationOutcome {
  *
  * 四种模式都只描述「取哪一段文本」，里面**没有句子切分** —— 切分单位只有一个：行
  * （换行判据见 [TranslationText.LINE_BREAKS]，含 `\n` / `\r` / Unicode 行终止符共 7 种）。
- * 所以没有换行的输入框（聊天框 / 搜索框）里，前三种模式会取到同一段（整篇即一行）。
+ * 所以没有换行的输入框（聊天框 / 搜索框）里，[LINE_BEFORE] 与 [BEFORE_ALL] 都退化成光标前缀、
+ * 取到同一段；[LINE_FULL] 与 [ALL] 都取到整篇。
  */
 internal enum class TranslationScope(val id: String, val label: String, val detail: String) {
     LINE_BEFORE(
@@ -294,7 +295,7 @@ internal val TranslationProviderId.defaultMaxBytes: Int
         TranslationProviderId.BAIDU -> 6_000
         // 官方 q 上限 6000 字符、建议 2000 字符以内 ⇒ 与通用版取同一档。原先填 32_768
         // （与 OpenAI 兼容同款）会让**默认配置**必然撞服务端上限，而超限码不在精确码表里 ⇒
-        // 一律「服务异常」，用户重试永远失败且每次都真计费（2026-10-01，L-307）。
+        // 一律「服务异常，请稍后重试」，用户重试永远失败且每次都真计费（2026-10-01，L-307）。
         TranslationProviderId.BAIDU_LLM -> 6_000
         TranslationProviderId.DEEPL -> 100_000
         TranslationProviderId.OPENAI -> 32_768
@@ -774,7 +775,7 @@ private fun Char.isInvisibleControl(): Boolean = when {
  *  - 原先只剥 `ZERO_WIDTH` 六码位，而**真正会让 okhttp 4.12 抛 `IllegalArgumentException` 的
  *    `U+007F`（DEL）不在其中**（`trim()` 也不删它），带 DEL 的 Key 走到客户端才被归 CREDENTIAL；
  *  - 更常见的一类是既不抛异常、也不被剥的那些（U+202F / U+2007 / U+180E / U+00AD / U+2061）：
- *    它们直接进 `Authorization` 头 ⇒ 服务端 401 ⇒ 归 AUTH「请检查凭据」，用户拿肉眼看不出问题的
+ *    它们直接进 `Authorization` 头 ⇒ 服务端 401 ⇒ 归 [AUTH]，用户拿肉眼看不出问题的
  *    Key 反复核对仍失败，整条链没有一处指向真因 —— 正是本函数 KDoc 想避免的结局。
  *
  * 按**类别**而不是白名单枚举，是为了不再漏下一个：不可见字符是 Unicode 里的一个类，不是 6 个点。
@@ -836,7 +837,7 @@ private fun isCredentialUnsafeChar(cp: Int): Boolean {
  *
  * `Ocp-Apim-Subscription-Region` 头要求 `eastasia` / `global` 这类标识符形态，而 Azure 门户上
  * 显示给用户的是 **`East Asia`**（带空格、首字母大写）。照抄进输入框 → 头值非法 → 服务端 401
- * → 归 AUTH → 提示只说「检查凭据」，用户重贴一遍 Key 仍然失败 —— 整条链上没有一处指向真因。
+ * → 归 [AUTH] → 提示只笼统让核对凭据，用户重贴一遍 Key 仍然失败 —— 整条链上没有一处指向真因。
  * 写侧（[Prefs.azureRegion]）与显式保存的核对侧共用这一个函数，避免两侧口径分叉（L-365 的同族坑）。
  */
 internal fun normalizeAzureRegion(raw: String): String =
