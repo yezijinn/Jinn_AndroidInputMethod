@@ -59,7 +59,7 @@ class SettingsActivity : ComponentActivity() {
     /** 底部使用说明（六行纯文本，文案在 [TEXT_USAGE] 里下发） */
     private lateinit var textUsage: TextView
 
-    // 功能开关（自动唤起键盘 / 词频学习 / 预测 / 键面韵母提示 / 拼音声韵显示）
+    // 功能开关（自动唤起键盘 / 词频学习 / 候选预测词）
     private lateinit var switchAutoShowKeyboard: Switch
     private lateinit var switchUserLearning: Switch
     private lateinit var switchPredict: Switch
@@ -128,7 +128,7 @@ class SettingsActivity : ComponentActivity() {
     private var importConfirmDialog: AlertDialog? = null
 
     /**
-     * 提示类对话框（更新提示 / 结果提示 / 时间选择器）：同一时刻只留一个，走 [showTipDialog] 弹。
+     * 提示类对话框（更新提示 / 结果提示）：同一时刻只留一个，走 [showTipDialog] 弹。
      *
      * 这些框由代码创建，旋转重建时不会自动恢复 —— 不显式 dismiss 就是 WindowLeaked
      * （manifest 未声明 configChanges，旋转必然重建页面）。
@@ -272,7 +272,7 @@ class SettingsActivity : ComponentActivity() {
             runCatching { startActivity(Intent(this, DictManagerActivity::class.java)) }
                 .onFailure { Diagnostics.w(TAG, "打开分类词库失败: ${it.message}") }
         }
-        // 需求：2 级词库没就位时，这个入口要比旁边那个更显眼 —— 词库直接决定能打出多少词，
+        // 2 级词库没就位时，这个入口要比旁边那个更显眼 —— 词库直接决定能打出多少词，
         // 而原先它只是一行同款普通按钮，下没下载过看起来一模一样
         refreshDictEntryEmphasis()
         // 按钮圆角间隙（键盘外观）：独立页面。入口文案为「键盘外观自选」—— 布局仍引用原
@@ -635,8 +635,8 @@ class SettingsActivity : ComponentActivity() {
      * 「本次检查」的序号（BUG.md L-145）：晚到的回调**不得**动界面。
      *
      * 看门狗 30s 只是常态余量（网络侧总预算 25s，而预算本身此前管不住滴水响应）——
-     * 一旦某次请求真的超过 30s，看门狗会解锁按钮、用户再点一次；此时**上一次**的回调若照旧
-     * `removeCallbacks` + `setUpdateState(Idle)`，删掉的就是**新那次**的看门狗，并把新请求
+     * 一旦某次请求真的超过 30s，看门狗会解锁按钮、用户再点一次；此时上一次的回调若照旧
+     * `removeCallbacks` + `setUpdateState(Idle)`，删掉的就是新那次的看门狗，并把新请求
      * 变成「在飞但没有看门狗」：它的回调再丢，按钮就永久停在「检查中…」。
      */
     private var checkSeq = 0
@@ -707,9 +707,9 @@ class SettingsActivity : ComponentActivity() {
             Diagnostics.i(TAG, "自动检查更新: 距上次 ${(now - last) / DAY_MS} 天，跳过")
             return
         }
-        // 网络与电量门控（MEM-17）：非 WiFi 且未充电时不做后台检查 —— 用户没在等它，
+        // 网络与电量门控（MEM-17）：非不计费网络且未充电时不做后台检查 —— 用户没在等它，
         // 不该为一次版本检查付流量与唤醒。**不推进 `updateLastCheckAt`**：下次打开设置页还会再判，
-        // 一旦回到 WiFi / 开始充电就补上（推进了就等于把这次检查吞掉）
+        // 一旦回到不计费网络 / 开始充电就补上（推进了就等于把这次检查吞掉）
         if (!UpdateChecker.autoCheckNetworkOk(this)) {
             Diagnostics.i(TAG, "自动检查更新: 当前非 WiFi 且未充电，跳过（下次打开设置页再判）")
             return
@@ -901,7 +901,7 @@ class SettingsActivity : ComponentActivity() {
         val provider = TranslationProviderId.of(prefs.translateProvider)
         // 注意：用「不可用成因」而不是 `translationProvider() != null`（2026-10-03，L-815）：
         // ① `null` 不再区分「没填凭据」与「端点不是 https」，摘要必须分因，否则 http 端点用户
-        //    会去反复检查已经填好的 Key 与模型名；② 顺带**省掉一次 provider 组装**（那会解密凭据）。
+        //    会去反复检查已经填好的 Key 与模型名；② 顺带省掉一次 provider 组装（那会解密凭据）。
         val reason = prefs.translateNotReadyReason()
         // 目标语言按 Provider 取：OpenAI 兼容用的是**它自己那套**（配置页里选，12 项预设 + 自定义），
         // 显示 translateTarget 会是一个永远不生效的死值（2026-09-30 审查发现 —— 用户改了
@@ -950,7 +950,7 @@ class SettingsActivity : ComponentActivity() {
         importPwdDialog = null
         importConfirmDialog?.dismiss()
         importConfirmDialog = null
-        // 提示类框（更新提示 / 结果提示 / 时间选择器）同一套道理
+        // 提示类框（更新提示 / 结果提示）同一套道理
         tipDialog?.dismiss()
         tipDialog = null
         // 明文临时包不跨页面生命周期：页面销毁（含旋转重建）时一并清掉。
@@ -1192,10 +1192,10 @@ class SettingsActivity : ComponentActivity() {
     /**
      * 给**含密码输入框**的对话框加防截屏 / 录屏 / 投屏 / 最近任务缩略图标志（2026-10-04，L-588）。
      *
-     * 为什么加在对话框窗口、而不是整个设置页：`FLAG_SECURE` 是**按窗口**生效的，而本页只有
+     * 为什么加在对话框窗口、而不是整个设置页：`FLAG_SECURE` 是按窗口生效的，而本页只有
      * 「导出配置 / 导入配置」两个密码框是机密（其余是 host / port、提示词这类非机密配置）。
      * 整页加会把「设置页截图」一并废掉（真机排查与用户留证都要用），对密码框却没有任何额外收益。
-     * 注意：投屏（ADB / scrcpy）下对话框内容不可见是**预期行为**，不是缺陷。
+     * 注意：投屏（ADB / scrcpy）下对话框内容不可见是预期行为，不是缺陷。
      */
     private fun securePasswordDialog(dialog: AlertDialog): AlertDialog = dialog.apply {
         window?.setFlags(
@@ -1431,7 +1431,7 @@ class SettingsActivity : ComponentActivity() {
     ) {
         // 页面重建后按钮会重新可点，而上一次导入的线程可能还在跑：进程级标记拦下这种重入。
         // 注意：这里必须自己清明文临时包：确认框的 positive 点击后已自动 dismiss，
-        // setOnCancelListener（负责删包与注销）**不会**触发，而 cleanupStaleCache 又按
+        // setOnCancelListener（负责删包与注销）不会触发，而 cleanupStaleCache 又按
         // in-flight 跳过该名字 ⇒ 否则这份已解密的明文备份会跨会话留在缓存目录里。
         if (ConfigBackupManager.importing) {
             if (pendingImportZip === zip) pendingImportZip = null
@@ -1650,7 +1650,7 @@ class SettingsActivity : ComponentActivity() {
         // 顺序有讲究：`maxLines` 一类属性会回头改写 inputType（单行化会清标志），
         // 而 `setRawInputType` 不走那套单行处理，能保证「普通文本 + 不联想」原样送达输入法。
         // NO_SUGGESTIONS 是给键盘侧看的：本项目键盘据此不联想、不记词频（见 InputFieldPrivacy）。
-        // imeOptions 会重写 TYPE_MASK_FLAGS 那一批位，必须放在 setRawInputType **之前**，
+        // imeOptions 会重写 TYPE_MASK_FLAGS 那一批位，必须放在 setRawInputType 之前，
         // 否则会把刚设好的 NO_SUGGESTIONS 抹掉（隐私效果靠 imeOptions 通道仍在，但少一层保险）
         imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         setRawInputType(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
@@ -1776,7 +1776,7 @@ class SettingsActivity : ComponentActivity() {
         /**
          * 「检查更新」看门狗超时：两源串行的总预算（`UpdateChecker.TOTAL_BUDGET_MS` = 25s）+ 5s 余量。
          *
-         * 15s 版本按「单个 10s 超时」留余量，但 GitHub 不可达时还要回退 Gitee 再来一轮，
+         * 15s 版本按「单个 10s 超时」留余量，但 Gitee 不可达时还要回退 GitHub 再来一轮，
          * 看门狗会先于请求熄灯解锁 —— 防重入判据随之失效，用户可并发发起第二次检查并重复弹窗。
          */
         const val UPDATE_WATCHDOG_MS = 30_000L

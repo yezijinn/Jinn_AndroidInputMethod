@@ -34,7 +34,7 @@ import java.util.Locale
  *
  * 数据口径与面板一致：keyset 分页、读侧解密、搜索驻留预算（24MB + 条数上限），
  * 删除走 [ClipboardDb.deleteAnyByIds] / [ClipboardDb.deleteByCategory]；
- * 「导入文件」见 [ClipboardFileImporter]（逐条仍走 [ClipboardStore.save] 这条唯一入库入口）。
+ * 「导入文件」见 [ClipboardFileImporter]（成批走 [ClipboardStore.saveChunk]，与单条 [ClipboardStore.save] 同源）。
  */
 class ClipboardHistoryActivity : ComponentActivity() {
 
@@ -269,7 +269,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
                 }
             }
         }
-        // 插在筛选行**之后**、列表与空态**之前**：收藏分组要「网格在上、列表（或空态）在下」
+        // 插在筛选行之后、列表与空态之前：收藏分组要「网格在上、列表（或空态）在下」
         (list.parent as ViewGroup).addView(
             favImageGrid, (list.parent as ViewGroup).indexOfChild(filterRow) + 1,
             LinearLayout.LayoutParams(
@@ -1141,7 +1141,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
         }
     }
 
-    // ── 图片条目（实施计划 §3 Step 4/5/6；与键盘面板同语义，动作走同一组工具） ──
+    // ── 图片条目（与键盘面板同语义，动作走同一组工具） ──
 
     /**
      * 图片分类：单击弹预览（缩略图放大 + 动作）。
@@ -1289,7 +1289,8 @@ class ClipboardHistoryActivity : ComponentActivity() {
     /** 图片分类：长按出菜单（复制 / 保存 / 转移 / 收藏 / 删除） */
     private fun showImageMenu(item: ClipboardDb.Item) {
         val favText = if (item.isFavorite) TEXT_UNFAVORITE else TEXT_FAVORITE
-        // 本页是**管理界面**，出五个动作：复制 / 保存 / 转移到图库目录 / 收藏 / 删除。
+        // 本页是**管理界面**，最多五个动作：复制 / 保存 / 转移到图库目录 / 收藏 / 删除
+        // （保存需相册可用，不可用时不显示该项）。
         // 键盘面板那套只出三个（转图库 / 收藏 / 删除）——面板贴着输入法窗口、点条目本身就是上屏，
         // 复制与保存留给预览对话框；两处的取舍不同源，改动时别互相「对齐」
         val entries = ArrayList<String>()

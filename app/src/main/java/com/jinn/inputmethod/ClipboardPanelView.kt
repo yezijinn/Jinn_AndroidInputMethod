@@ -22,16 +22,17 @@ import java.util.Locale
  *  - 隐私标记随 v5 迁移移除（2026-09-16），条目不再走掩码逻辑
  *  - 动态 UI 序号（最新=最大，删除后重排，非数据库 ID；去重由入库时的哈希唯一索引承担）
  *  - 点击记录粘贴 + 成功关闭面板（失败不关闭，快速点击去重）
- *  - 长按：文本条目收藏 / 删除；图片条目另有复制 / 保存 / 转图库（见 [ClipboardImageAction]）
+ *  - 长按：文本条目收藏 / 删除；图片条目另有「转图库」（复制 / 保存只在历史页提供，见 [ClipboardImageAction]）
  *  - 搜索按钮：回调 [Listener.onSearch]，由 PinyinKeyboardView 关闭本面板并
  *    显示顶部搜索面板（搜索面板独立于剪贴板面板，见 SearchPanelView）
  *  - 空分类显示空态，绝不触发返回
  *
- * 身份不变量：点击用稳定 itemId 查找，不依赖 position；
+ * 身份不变量：点击优先用稳定 itemId 查找，取不到才退回下标；
  * 越界/已删除/已去重一律安全忽略。
  *
  * [SearchPanelView] 是本类的平行实现（适配器 / 分页 / 空态 / 刷新令牌 / 首帧兜底
- * 各写一份），改这里必须同步那边，否则两个入口的列表行为会漂移。
+ * 各写一份），改这里要检查那边；两者共用 `ClipboardDb.recentPageAfter` 与
+ * `ClipboardStore` 的预算常量，否则两个入口的列表行为会漂移。
  *
  * 安全：不输出任何剪贴板正文日志。
  */
@@ -541,9 +542,9 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
             visibility = GONE
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        // 图片条目的动作排在最前（转图库 / 收藏 / 删除），文本条目时隐藏「转图库」。
-        // 菜单只出这三个：复制与保存不再露面（点击条目本身就是上屏，转移已覆盖「存到相册」），
-        // 三个键各占 1/3 面板宽，比原先挤五个好按
+        // 菜单最多三个键（转图库 / 收藏 / 删除）：图片条目全出，文本条目隐藏「转图库」。
+        // 复制与保存不在面板里（点击条目本身就是上屏，转移已覆盖「存到相册」）。
+        // 同一排按钮等宽：图片三项各占 1/3，文本两项各占 1/2，比原先挤五个好按
         actionMove = tabButton("转图库") { imageAction(ClipboardImageAction.MoveToGallery) }
         actionFavorite = tabButton("收藏") { toggleFavorite() }
         actionDelete = tabButton("删除", TapSound.G_ERASE) { deleteItem() }
@@ -907,7 +908,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      * 见 `BUG.md` L-17）：面板的刷新/分页靠 [refreshToken] 判停，而重建键盘不走
      * `onShown` / `onHidden`，不作废就会把结果回填到已经脱离视图树的列表上。
      *
-     * 剪贴板面板只取单页（50 条），代价远小于搜索的整库扫描，这一层是防御性对称。
+     * 剪贴板面板只取少量条目（默认 50 条，可调 2..75），代价远小于搜索的整库扫描，这一层是防御性对称。
      */
     fun stopBackgroundWork() {
         refreshToken++
@@ -926,7 +927,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
      *
      * 为什么是手动触发：首屏止损存在的意义就是**不**在每次开面板时白解密全表 —— 密钥失效时整表都
      * 读不出，自动续扫等于每次开面板把所有密文页读一遍。手动则把代价限定在「用户真的想找」的点击上
-     * （每点一次多扫 ≤400 行；找不到就还是这个空态，可以再点）。
+     * （默认 50 条时，每点一次多扫 ≤400 行；找不到就还是这个空态，可以再点）。
      */
     private fun continueScan() {
         if (loadingPage || !scanStoppedEarly) return
@@ -1085,8 +1086,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         // 那正是 L-127 的原症状（长按后什么都看不到）。复位点就是「保证判据不靠上一版手势的残余」。
         listScrolling = false
         actionFavorite.text = if (item.isFavorite) "取消收藏" else "收藏"
-        // 图片条目多三个动作（复制 / 保存 / 转图库）；文本条目把它们藏起来（同一排按钮，均分宽度）
-        // 图片条目才出「转图库」；收藏与删除两类条目共用
+        // 图片条目才多出「转图库」；收藏与删除两类共用（同一排按钮等宽平分）
         val isImage = item.image != null
         actionMove.visibility = if (isImage) View.VISIBLE else View.GONE
 
@@ -1316,7 +1316,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
     private fun faceRipple(base: Int): Int =
         if (skin.isToken) context.getColor(R.color.key_ripple) else KeyboardSkins.rippleOn(base)
 
-    /** [b] 是否为「当前选中分类」的按钮（返回 / 搜索 / 清空等非分类按钮恒为 false） */
+    /** [b] 是否为「当前选中分类」的按钮（搜索 / 布局 / 清空等非分类按钮恒为 false） */
     private fun isSelectedCategoryButton(b: TextView): Boolean {
         val selected = currentCategory
         return when (b) {
@@ -1497,7 +1497,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
          * 空态：扫到止损上限仍一条都没读出来，但后面还有没扫过的行（BUG.md L-76）。
          *
          * 与 [TEXT_EMPTY_UNREADABLE] 的区别是「还有得找」：文案明说可点，点一下沿游标再扫一批
-         * （[continueScan]）。首屏止损让「最新 400 行连续坏」时不再白解密全表，代价是更早那批
+         * （[continueScan]）。首屏止损让「最新 400 行（默认 50 条）连续坏」时不再白解密全表，代价是更早那批
          * 能解密的历史要靠这一步才能翻到 —— 不给出入口就是死路。
          */
         const val TEXT_EMPTY_UNREADABLE_MORE = "历史内容无法读取\n（点这里继续查找更早的记录）"
