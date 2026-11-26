@@ -293,7 +293,7 @@ class Prefs(private val appContext: Context) {
     /**
      * 选择台账（用户词库原料）：把 26 键上屏的候选按「词 + 读音」只追加记录。
      *
-     * **默认关**：属于会长期留痕的隐私数据，必须用户在说明弹框里手输大写 OK 才开启；
+     * **默认关**：属于会长期留痕的隐私数据，必须用户在说明弹框里逐字输入「我明白」才开启；
      * 关闭时连同 `user_picks.txt` 一起删除（见 [SelectionLedger.deleteFile]）。
      */
     var userDictEnabled: Boolean
@@ -2641,7 +2641,7 @@ class Prefs(private val appContext: Context) {
         private const val KEY_USER_LEARNING = "user_learning"
         private const val KEY_USER_PHRASE_ENABLED = "user_phrase_enabled"
 
-        /** 选择台账开关（默认关；会长期留痕，必须手输 OK 才开） */
+        /** 选择台账开关（默认关；会长期留痕，必须逐字输入「我明白」才开） */
         private const val KEY_USER_DICT_ENABLED = "user_dict_enabled"
         /** 上次成功检查更新的时刻（epoch ms；0 = 从未成功检查过） */
         private const val KEY_UPDATE_LAST_CHECK_AT = "update_last_check_at"

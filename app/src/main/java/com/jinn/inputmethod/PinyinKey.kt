@@ -378,7 +378,7 @@ import kotlin.math.min
             val w = width.toFloat()
             val h = height.toFloat()
             // 四边等量内缩：左右间隙与上下间隙由同一个参数决定（见 KeyAppearance）。
-            // 上限保护：内缩超过键尺寸一半会把矩形压没，此时退化到「不留缩进」。
+            // 上限保护：内缩超过键尺寸一半会把矩形压没，故钳到半键尺寸减 1px，小边留 2px。
             val inset = insetPx.coerceIn(0f, (min(w, h) / 2f - 1f).coerceAtLeast(0f))
             rect.set(inset, inset, w - inset, h - inset)
 

@@ -1004,7 +1004,7 @@ class DictManagerActivity : Activity() {
      * 体积文案：口径收在 [ByteSize]（存储占用页要报 GB 量级，两页各写一套必然分叉）。
      *
      * 2026-10-10 起进制改为**十进制**（与 Android `Formatter`、清单 `sizeMb` 同口径）：
-     * 本页数字因此与卡片说明里的「5.89MB」对齐（旧文案按 1024 进制写 5.6 MB，对不上账）。
+     * 本页数字因此与清单 `sizeMb` 同口径（旧文案按 1024 进制写 5.6 MB，对不上账）。
      */
     private fun formatSize(bytes: Long): String = ByteSize.text(bytes)
 

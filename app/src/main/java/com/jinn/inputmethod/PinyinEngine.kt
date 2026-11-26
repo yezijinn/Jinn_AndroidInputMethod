@@ -584,7 +584,7 @@ object PinyinEngine {
             UserFrequency.load(context, prefs.userLearning)
             // 连续选词自造词组：独立小表，查询期只读内存；默认开
             UserPhrases.load(context, prefs.userPhraseEnabled)
-            // 选择台账（只追加的词库原料）：默认关，开关由用户在说明弹框里手输 OK 打开
+            // 选择台账（只追加的词库原料）：默认关，开关由用户在说明弹框里逐字输入「我明白」打开
             SelectionLedger.init(context, prefs.userDictEnabled)
 
             // 单段加载：2026-09-27 起源改为「第 1 部分」短语库（xz 2.1MB / 29.9 万键），
