@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * 讯飞在线听写（语音听写大模型 V2.0）客户端，[SpeechClient] 的在线实现之一。
  *
  * 与 [AsrClient] 的差别只在**连接的生命周期**：讯飞一次会话一条连接，服务端不接受跨任务的
- * 音频缓冲，所以收尾（拿到最终结果 / 出错）就断掉旧连接、**随即预连下一条**
+ * 音频缓冲，所以收尾（拿到最终结果 / 出错）就断掉旧连接、随即预连下一条
  * （见 [releaseAndPreconnect]：下一次按键到真开始录音只有 ~500ms，现等握手必然赶不上；
  * 预连的那条按空闲窗口关闭，没人再说话就归零）。
  *
@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
  * 线程模型：泵与空闲关闭跑在主线程 Handler（每拍只做一次 `WebSocket.send`，不阻塞），
  * 回调（`onState` / `onResult`）在 OkHttp 的 IO 线程触发，接收方自行切主线程。
  *
- * ⚠ 凭据只从 [Prefs] 读，日志里**只记长度与「已配置 / 未配置」**，绝不输出原文。
+ * ⚠ 凭据只从 [Prefs] 读，日志里只记长度与「已配置 / 未配置」，绝不输出原文。
  */
 class XfIatClient(
     private val prefs: Prefs,
@@ -60,7 +60,7 @@ class XfIatClient(
     /**
      * 当前连接上是否已经开过一次会话。
      *
-     * 讯飞**一次会话一条连接**：末帧发出后同一条 WebSocket 不能再开新任务（服务端已按
+     * 讯飞一次会话一条连接：末帧发出后同一条 WebSocket 不能再开新任务（服务端已按
      * 「这段音频结束」处理过）。上一段识别没等到最终结果（超时 / 结果被丢弃）时连接可能还挂着，
      * 这时 [beginTask] 必须强制重连，而不是复用那条已经用过的连接。
      */
@@ -70,7 +70,7 @@ class XfIatClient(
     @Volatile
     private var taskStartMs = 0L
 
-    // ── 音频泵 ──────────────────────────────────────────────
+    // ── 音频泵 ──
 
     private val pumpHandler = Handler(Looper.getMainLooper())
 
@@ -92,7 +92,7 @@ class XfIatClient(
 
     private val pumpRunnable = Runnable { pumpTick() }
 
-    // ── 空闲关闭 ────────────────────────────────────────────
+    // ── 空闲关闭 ──
 
     private val idleHandler = Handler(Looper.getMainLooper())
     private val idleRunnable = Runnable { onIdleCloseDue() }
@@ -118,7 +118,7 @@ class XfIatClient(
      * OkHttp IO 线程的 [releaseAndPreconnect]（收到最终结果后预连下一条），而「用户恰好在收尾那一瞬
      * 按键」正是 [sessionStarted] 要挡的场景。不串行化时两次 `newWebSocket` 可以交错到
      * 「两个都先 closeSocket、再各自赋值」：先建那条被后写的 `socket = …` 覆盖，它的回调从此因
-     * `webSocket !== socket` 全部返回，**没有任何人再持有它**；更糟的是其中一方刚建好就被另一方的
+     * `webSocket !== socket` 全部返回，没有任何人再持有它；更糟的是其中一方刚建好就被另一方的
      * `closeSocket()` 关掉，`socket` 停在 null 而 state 停在 CONNECTING，这一次按键必然落空。
      */
     @Synchronized
@@ -351,7 +351,7 @@ class XfIatClient(
         Diagnostics.i(TAG, "空闲关闭：连接已释放")
     }
 
-    // ── 音频泵 ──────────────────────────────────────────────
+    // ── 音频泵 ──
 
     /**
      * 一拍（40ms）：按「已到期的帧数」发，落后就一次多发几帧补齐。
@@ -372,7 +372,7 @@ class XfIatClient(
                 if (!current.send(XfIatProtocol.audioFrame(sessionAppId, frame, seq = nextSeq()))) {
                     // 停拍是刻意的（重排只会往坏连接继续灌音频），但**不能只停拍**（A-729）：
                     // 任务还挂在 ONLINE，`sendChunk` 会继续攒到 1.92MB，松手时 `finishTask` 再把
-                    // 这一整段当**一帧**发出去（协议口径 40ms/帧）⇒ 后半句全丢、状态条只剩 code≠0。
+                    // 这一整段当一帧发出去（协议口径 40ms/帧）⇒ 后半句全丢、状态条只剩 code≠0。
                     // 当场作废任务，用户立刻知道是「发送失败」，而不是几十秒后才收到一个莫名错误码。
                     Diagnostics.w(TAG, "pumpTick: 发送失败，本段作废")
                     updateState(LinkState.OFFLINE, TEXT_SEND_FAILED)
@@ -400,7 +400,7 @@ class XfIatClient(
         }
     }
 
-    // ── WebSocket 回调 ──────────────────────────────────────
+    // ── WebSocket 回调 ──
 
     private val listener = object : WebSocketListener() {
 
@@ -444,7 +444,7 @@ class XfIatClient(
 
     /**
      * 回包分派：`code != 0` 视为失败落到状态条（不静默）；否则按 `ls` / `header.status=2`
-     * 判定最终结果，最终结果**送达后立刻断连并预连下一条**（讯飞一次会话一条连接，
+     * 判定最终结果，最终结果送达后立刻断连并预连下一条（讯飞一次会话一条连接，
      * 见 [releaseAndPreconnect]）。
      */
     private fun handleMessage(raw: String) {

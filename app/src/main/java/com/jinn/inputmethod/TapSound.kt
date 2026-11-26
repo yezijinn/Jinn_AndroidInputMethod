@@ -14,7 +14,7 @@ import java.util.Locale
  */
 internal object TapSound {
 
-    // ── 按键分组（2026-10-05 定，6 组）────────────────────────────
+    // ── 按键分组（2026-10-05，6 组）──
     //
     // ⚠ 分组维度是「按下瞬间解析出的**角色**」，不是物理键位：26 个键在字母 / 数字 / 符号 /
     // 密码四态下是同一批 View，同一个键在数字层是「1」、在符号层是「，」。
@@ -44,7 +44,7 @@ internal object TapSound {
     /** 设置页逐行显示的分组名（顺序即 [G_TEXT]…[G_FUNC]） */
     val GROUP_LABELS = arrayOf("文字输入", "数字", "符号标点", "删除清空", "确认键", "功能切换")
 
-    // ── 音效清单（真实录音，放 app/src/main/assets/sounds/keyboard/）────────
+    // ── 音效清单（真实录音，放 app/src/main/assets/sounds/keyboard/）──
 
     /** asset 目录（相对 assets 根） */
     const val ASSET_DIR = "sounds/keyboard"
@@ -111,15 +111,15 @@ internal object TapSound {
     /** 音色选择列表的序号 → 映射值（[pickerIndex] 的逆：末位是 [NONE]，其余是音效索引） */
     fun pickerChoice(which: Int): Int = if (which == SOUND_COUNT) NONE else clampIndex(which)
 
-    // ── 默认映射（用户未改动时各组用哪个音）────────────────────────
+    // ── 默认映射（用户未改动时各组用哪个音）──
     //
     // 六组统一用音效 10（`kbd_10.ogg`，138ms，onsets 2 = click + 触底双瞬态）。选它而不是
     // 「每组配一个贴合角色的音」：一条声音对全部按键，敲起来更一致，也不会出现某一组偏尖、
     // 某一组偏闷的分层感。分组信息只留在震动波形上 —— 删除 / 清空用双段触感（[isDoublePulse]），
-    // 静音场景下那是删除唯一的辨识线索。**已改过音色的用户各组不同**，此时声音本身就分得开，双段是第二重线索。
+    // 静音场景下那是删除唯一的辨识线索。已改过音色的用户各组不同，此时声音本身就分得开，双段是第二重线索。
     val DEFAULT_MAP = intArrayOf(9, 9, 9, 9, 9, 9)
 
-    // ── 音效强度 ───────────────────────────────────────────────
+    // ── 音效强度 ──
 
     const val VOLUME_MIN = 0
     const val VOLUME_MAX = 100
@@ -138,7 +138,7 @@ internal object TapSound {
      */
     fun volumeLabel(percent: Int): String = String.format(Locale.US, "%d%%", clampVolume(percent))
 
-    // ── 震动档位（4 档，2026-10-05 定）────────────────────────────
+    // ── 震动档位（4 档，2026-10-05）──
 
     const val VIB_OFF = 0
     const val VIB_WEAK = 1
@@ -169,7 +169,7 @@ internal object TapSound {
     /**
      * 是否为「双段触感」的分组：删除 / 清空用两下短震。
      *
-     * 未改过音色的用户六组同音，此时**双段是删除唯一的辨识线索** —— 静音（不播声）场景下它就是
+     * 未改过音色的用户六组同音，此时双段是删除唯一的辨识线索 —— 静音（不播声）场景下它就是
      * 「刚才那一下是删除」的唯一依据。改这个判据前先想清楚这一点。
      */
     fun isDoublePulse(group: Int): Boolean = group == G_ERASE
@@ -199,7 +199,7 @@ internal object TapSound {
     /** 停顿上限：再大后半段就容易被下一键截断（替换语义，见上） */
     private const val ERASE_PULSE_GAP_MAX = 40L
 
-    // ── 映射串解析（脏数据防护）──────────────────────────────────
+    // ── 映射串解析（脏数据防护）──
 
     /**
      * 音效索引归一：一律钳到 `[NONE]..[SOUND_COUNT]-1`。
@@ -207,7 +207,7 @@ internal object TapSound {
      * 这是**唯一**的索引钳位出口 —— 默认映射的四处回落（串为空 / 错位整体回落 / 缺字段留默认 /
      * 单项上界外）与 [formatMap] 的落盘都过它。原先只有「单项上界外」那一支带 `coerceIn`，
      * 而 [DEFAULT_MAP] 自己从不归一：一旦改小 [SOUND_COUNT] 却忘了同步默认映射，另外三条出口
-     * 照样把越界值原样漏出去，「将来改小 SOUND_COUNT 时的保险」并不成立（2026-10-28 复核）。
+     * 照样把越界值原样漏出去，「将来改小 SOUND_COUNT 时的保险」并不成立（2026-10-28）。
      */
     fun clampIndex(value: Int): Int = value.coerceIn(NONE, SOUND_COUNT - 1)
 
@@ -229,8 +229,8 @@ internal object TapSound {
      * - 单项负数（连 [NONE] 之外的值）→「不播放」
      * - 单项上界外 → 回落该项默认音
      *
-     * 越界为什么不钳到末位：音效下架会让 [SOUND_COUNT] 变小，于是**旧版本里合法的索引变成
-     * 越界**。钳到末位会把用户精挑的音色静默换成另一个（而读写两侧都过本函数，落盘串随即被
+     * 越界为什么不钳到末位：音效下架会让 [SOUND_COUNT] 变小，于是旧版本里合法的索引变成
+     * 越界。钳到末位会把用户精挑的音色静默换成另一个（而读写两侧都过本函数，落盘串随即被
      * 覆写、原值不可恢复）；回落默认音至少是条明确规则，且该组没被改过时它的默认音本就是
      * 用户自己的选择。
      *

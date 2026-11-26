@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
  * 一次「整段上传」识别的结局（[BufferedBatchAsrClient.recognize] 的返回值）。
  *
  * 只区分「拿到文本」与「为什么没拿到」：空文本也是 [Ok]（链路通、只是没听到声音），
- * 失败原因必须是**能给用户看的那句话**（服务端 code / message、HTTP 状态码）。
+ * 失败原因必须是能给用户看的那句话（服务端 code / message、HTTP 状态码）。
  */
 sealed class BatchOutcome {
 
@@ -28,7 +28,7 @@ sealed class BatchOutcome {
 }
 
 /**
- * 缓冲式批量识别基类（[SpeechClient] 的通用实现）：**本地缓冲整段音频 → 松手一次性上传 → 回包落字**。
+ * 缓冲式批量识别基类（[SpeechClient] 的通用实现）：本地缓冲整段音频 → 松手一次性上传 → 回包落字。
  *
  * 覆盖的服务商都是「不收流式音频、一次请求换整段文本」那一类：OpenAI 兼容 `/audio/transcriptions`、
  * 腾讯云一句话识别、Azure 短音频识别 REST、百度短语音、Deepgram。五家的差别只在「请求怎么组、
@@ -46,7 +46,7 @@ sealed class BatchOutcome {
  * [cancelTask] / [close] 直接 `cancel()` 打断在飞请求（不 cancel 的话松手取消后它还会跑完、
  * 白花一次配额）。
  *
- * ⚠ 凭据只从 [Prefs] 读，且**只进各自的鉴权头**：日志与异常文本里只有长度与状态码，
+ * ⚠ 凭据只从 [Prefs] 读，且只进各自的鉴权头：日志与异常文本里只有长度与状态码，
  * 绝不出现原文（异常正文可能回显请求，故 [describe] 只取 `message` 且截断）。
  */
 abstract class BufferedBatchAsrClient(
@@ -100,7 +100,7 @@ abstract class BufferedBatchAsrClient(
     protected abstract fun prepare(): String?
 
     /**
-     * 一次性识别：**跑在后台上传线程上**（阻塞可以）。
+     * 一次性识别：跑在后台上传线程上（阻塞可以）。
      *
      * @param wav 已经套好 44 字节 WAV 头的完整音频
      * @param pcm16 原始 PCM16（个别服务商要的是未加头的裸流长度）
@@ -130,7 +130,7 @@ abstract class BufferedBatchAsrClient(
                 return null
             }
         }
-        // 上一段没走完就再来一次：直接丢弃旧缓冲。**在途上传也可能存在**（`endTask` 已把 taskId
+        // 上一段没走完就再来一次：直接丢弃旧缓冲。在途上传也可能存在（`endTask` 已把 taskId
         // 交出去、上传还在排队/在飞）—— 换新 id 就让旧上传在闸门处自我了结，旧结果不再落字，
         // 语义是「新的覆盖旧的」（代价：那一次配额已经花掉）。
         synchronized(pcm) { pcm.reset() }
@@ -278,7 +278,7 @@ abstract class BufferedBatchAsrClient(
                 return@execute
             }
             val duration = (System.currentTimeMillis() - taskStartMs) / 1000.0
-            // ⚠ 关闸门与投递必须**同在主线程那一个 Runnable 里**完成，且关闸前再判一次归属。
+            // ⚠ 关闸门与投递必须同在主线程那一个 Runnable 里完成，且关闸前再判一次归属。
             // 原先在后台线程先 `acceptingTask = null` 再 `main.post`，两者之间被取消 / 新一段听写
             // 插进来时（主线程正忙），排队的那个 Runnable 照样会把**旧任务**的正文交上去：
             // `JinnIme.handleResult` 只比包名、不看 taskId，新一段正在录时旧文本会被 commit 进输入框，
