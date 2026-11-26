@@ -363,7 +363,7 @@ class JinnIme : InputMethodService() {
      * 到点就是**这一段已经放弃**，只复位状态条不够 —— 客户端的采纳闸门（`acceptingTask`）还开着，
      * 61 秒后才回的那条 final 仍会 `commitText` 上屏，而此刻用户早已把「识别中」读成「没成」，
      * 多半已经在别的输入框里打字了。所以对在线后端连任务一起作废：
-     *  - `cancelTask()` 只关闸门、不发多余报文（`endTask` 早发过收尾包，三家流式实现都不会再发一帧）；
+     *  - `cancelTask()` 只关闸门、不发多余报文（`endTask` 早发过收尾包，在线各家都不会再发一帧）；
      *  - 归属快照一并清掉，避免它滞留到下一段（跨应用校验的基准该由新一段自己建立）。
      *
      * 自建 CapsWriter 不作废，只复位提示，理由见下面的注释：它的单次时长上限是 180 秒，
@@ -590,7 +590,7 @@ class JinnIme : InputMethodService() {
      * 单次听写的兜底收尾（防止用户忘了关 / 超过服务端上限）。
      *
      * 只由 [startRecording] 按后端与手势模式排程：自建后端只有 TOGGLE 排（服务端可长跑），
-     * 在线后端 TOGGLE 与 HOLD 都排（各家单次音频硬上限 60 秒）。故这里只判「还在录」，
+     * 在线后端 TOGGLE 与 HOLD 都排（按 [XF_MAX_TASK_MS] 58s 保守截断）。故这里只判「还在录」，
      * 不再区分 TOGGLE / HOLD —— 判 mode 会把 HOLD 到点的那次收尾静默吃掉。
      */
     private val autoStopRunnable = Runnable {
@@ -1485,8 +1485,8 @@ class JinnIme : InputMethodService() {
     }
 
     /**
-     * 落待插入图片：选图页（[GalleryPickActivity]）与键盘面板都已把图片复制进 cache 并排进
-     * [GalleryInsert] 的队列，回到本会话时**按顺序全部**提交给宿主（L-1041：连点两张不再丢一张）。
+     * 落待插入图片：选图页（[GalleryPickActivity]）先复制进 cache；键盘面板只回 URI，由本文件经
+     * [GalleryInsert] 复制进 cache，两者都排进队列，回到本会话时**按顺序全部**提交给宿主（L-1041：连点两张不再丢一张）。
      *
      * 时机与 [flushPendingPaste] 同款：从选图页回来必定新起一次输入会话，在
      * `onStartInputView` 调用即可；面板点图那条路另有一次即时调用。无连接时直接丢弃 ——
@@ -2683,7 +2683,7 @@ class JinnIme : InputMethodService() {
         return maxOf(byInsets, byDimen)
     }
 
-    /** 窗口参数落地（`setLayout` 只写 attributes；已挂上的窗口必须 updateViewLayout 才会重排） */
+    /** 窗口参数落地（写 `win.attributes` / `lp.gravity`；已挂上的窗口必须 `updateViewLayout` 才会重排） */
     private fun updateFloatingWindow(win: android.view.Window, lp: android.view.WindowManager.LayoutParams) {
         win.attributes = lp
         runCatching {
@@ -4512,8 +4512,8 @@ class JinnIme : InputMethodService() {
     /**
      * 自动收尾时长（按当前后端）。TOGGLE 用它；在线后端下 HOLD 直接用 [XF_MAX_TASK_MS]。
      *
-     * 在线各家单次音频硬上限 60 秒（讯飞到点直接截断；OpenAI 兼容按「单次上传」语义），
-     * 故 58s 收尾，留 2 秒给末帧 / 上传与最终结果。
+     * 在线各家单次音频上限不同（讯飞到点直接截断；OpenAI 兼容按「单次上传」语义），
+     * 取最保守的 58s 收尾，留 2 秒给末帧 / 上传与最终结果。
      * 自建 CapsWriter 按连接持有缓冲、可以长跑，保持原值。
      */
     private fun autoStopDelayMs(): Long =
@@ -6436,9 +6436,9 @@ class JinnIme : InputMethodService() {
         const val MAX_TOGGLE_MS = 180_000L
 
         /**
-         * 在线后端的单次听写上限：各家单次音频硬上限都是 60 秒，留 2 秒给末帧 / 上传与最终结果。
+         * 在线后端的单次听写上限：各家单次音频上限不同，取最保守的 58s，留 2 秒给末帧 / 上传与最终结果。
          *
-         * **TOGGLE 与 HOLD 都要用**：26 键长按同样可能按住超过 60 秒，到点被服务端截断的表现
+         * **TOGGLE 与 HOLD 都要用**：26 键长按同样可能按住超过 58 秒，到点被服务端截断的表现
          * 是「后半段说的话一个字都没有」——26 键下没有状态条，用户只会以为识别不准。
          * 常量名沿用讯飞时期的 `XF_MAX_TASK_MS`（改名会动到既有守卫，收益为零）。
          */
