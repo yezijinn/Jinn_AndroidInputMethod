@@ -151,7 +151,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
             // v8：图片支持。四条元数据列全部带 NOT NULL DEFAULT，老行（全文本）天然合法，
             // 无需 backfill；配套建内容类型索引（见 DB_VERSION 注释）。
             // ⚠ 加列不删列：装回旧版 APK 时旧版按显式列名查询，新列被忽略（onDowngrade 只回写版本号）。
-            // ⚠ 必须按**列是否存在**决定加不加：v3/v5 的重建分支用的是**新版**建表 SQL（已含 image_* 列），
+            // ⚠ 必须按**列是否存在**决定加不加：v3/v5 的重建分支用的是新版建表 SQL（已含 image_* 列），
             // 从那些版本一路升上来时列已存在，无条件 ALTER 会报 `duplicate column name` ⇒ 整库打不开。
             if (!hasColumn(db, "image_bytes")) {
                 db.execSQL("ALTER TABLE $TABLE_ITEMS ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0")
@@ -431,7 +431,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      *
      * 为什么是「块事务 + 逐条语义」而不是备份导入那样的「纯插入批」：
      * 文件导入走的是 `upsert`，五条语义一条都不能丢 —— ①`findIdByHash` 判重；②命中即更新元数据并
-     * **置顶**（`created_at = monotonicNow()`，L-1092 钳位）；③命中但密文解不开时**坏行自愈**（L-173）；
+     * **置顶**（`created_at = monotonicNow()`，L-1092 钳位）；③命中但密文解不开时坏行自愈（L-173）；
      * ④命中却更新 0 行时**幽灵 id 兜底**改插入（L-200）；⑤未命中才加密 + 分类 + 插入。
      * 这五条全是「逐条即时决策」，能省的只有提交开销 ⇒ 只把 `beginTransaction/endTransaction`
      * 提到块这一层，每条的处理顺序、事务内的读（`MAX(created_at)` / `findIdByHash` /
@@ -442,7 +442,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
      * 就出现「先拿连接、再拿监视器」的反向顺序 —— 另一线程此刻正持监视器等连接
      * （非 WAL 库的连接池只有一个连接）⇒ 死锁。保持一致顺序（监视器 → 连接）即可。
      * 代价是一块的处理时间占着锁：一块 [ClipboardFileImporter.IMPORT_CHUNK_ROWS] 条、约 180 ms。
-     * ⚠ 与块级备份导入**不同**：那条路径把 `ClipboardCrypto.encrypt` 整块放在锁**外**
+     * ⚠ 与块级备份导入不同：那条路径把 `ClipboardCrypto.encrypt` 整块放在锁**外**
      * （[insertRestoredBatch] ②的取舍），这里做不到 —— 每行要不要加密取决于判重 / 自愈的逐行结果。
      * 实测这块持锁时间里约 3/4 是块内的 Keystore 加密（1.4 ms/条）与哈希（0.14 ms/条），不是 SQL；
      * 再压锁占用得先把加密挪出锁：要求「先判重、再只对未命中行加密」，而判重结果是逐行的，
@@ -1903,8 +1903,8 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * 首屏填页的**明文字节预算**：累计 `Σ(条目 UTF-8 字节)` 超过它就不再收新页（BUG.md L-91）。
          *
          * 为什么不能只限页数：`out` 的累计上限是 `limit - 1 + limit`（末页整页收下）——
-         * 面板 50 条时最坏 **99 条**；若这 99 条都接近单条上限（256KB），
-         * 解密峰值 = 99 × 256KB × [ClipboardStore.DECRYPT_ITEM_AMPLIFICATION] ≈ **61.9MB**，
+         * 面板 50 条时最坏 99 条；若这 99 条都接近单条上限（256KB），
+         * 解密峰值 = 99 × 256KB × [ClipboardStore.DECRYPT_ITEM_AMPLIFICATION] ≈ 61.9MB，
          * 超过 [ClipboardStore.DECRYPT_WINDOW_BUDGET_BYTES]（48MB）。填页跑在后台线程
          * `jinn-clipboard-io`，越界就是 OOM 杀 IME 进程（键盘突然消失、输入中断）。
          *
