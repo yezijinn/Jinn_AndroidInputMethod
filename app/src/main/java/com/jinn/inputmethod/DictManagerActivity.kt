@@ -370,7 +370,7 @@ class DictManagerActivity : Activity() {
 
     private fun refreshList() {
         // 残留临时件清理（2026-10-04 修复 L-798；2026-10-05 加 mtime 保护，见 BUG.md L-827）：
-        // 下载中被系统杀会留下 `*.xz.tmp`（上限 64MB），而它既不在清单、也不以 `.xz` 结尾 ⇒ 词库页看不见
+        // 下载中被系统杀会留下 `*.xz.tmp`（上限 64MiB），而它既不在清单、也不以 `.xz` 结尾 ⇒ 词库页看不见
         // 也删不掉，只能清数据 / 卸载才释放。判据三条：`*.xz.tmp`、不是**正在下载**的那个（`downloading`
         // 跨实例跟踪，重建页面也不会误删）、也不在**刚写入**的保护窗内（自定义词库导入走固定临时名，
         // 导入中回到前台时这里若把它当残留删掉，随后的改名必然失败 —— Linux 删除已打开文件是成功的）。
@@ -1150,7 +1150,7 @@ class DictManagerActivity : Activity() {
                 .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
                 // 整体预算（2026-10-03，L-548）：只有 connect/read 两层时，服务端「开始回包后极慢地
                 // 吐字节」（每 179s 一个字节）能让下载线程挂到理论无限，而 `activeDownload` 只在成功/失败
-                // 时清 ⇒ 按钮永久禁用、用户既不能取消也没有提示。600s 覆盖 64MB 上限在慢速网络下的合理耗时。
+                // 时清 ⇒ 按钮永久禁用、用户既不能取消也没有提示。600s 覆盖 64MiB 上限在慢速网络下的合理耗时。
                 .callTimeout(600, java.util.concurrent.TimeUnit.SECONDS)
                 .connectionSpecs(listOf(okhttp3.ConnectionSpec.MODERN_TLS))
                 .followRedirects(true)
@@ -1170,7 +1170,7 @@ class DictManagerActivity : Activity() {
         @Volatile
         private var activePage: WeakReference<DictManagerActivity>? = null
 
-        /** 单个词库包的下载上限（字节）：现役最大包 5.89MB（第 2 部分，2026-10-10 重切后），取 64MB 留足余量 */
+        /** 单个词库包的下载上限（字节）：现役最大包 5.89MB（第 2 部分，2026-10-10 重切后），取 64MiB 留足余量 */
     }
 }
 

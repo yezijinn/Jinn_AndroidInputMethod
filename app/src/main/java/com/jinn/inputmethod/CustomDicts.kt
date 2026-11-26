@@ -729,8 +729,8 @@ internal object CustomDicts {
             // 两档分别上报（L-861）
             val pack = toRawPackLines(parsed.entries)
             // 过闸才让源文本生效（BUG.md L-1084）。改名放在闸位之后：此前在写盘那一遍里就改名，
-            // 三道闸任一击中都执行 staged?.delete() —— 删的正是**正式源文本**，等于「这次保存被拒」
-            // 顺带把用户既有的草稿清掉，与 KDoc 的不变量①（源文本与包都不动）相反。
+            // 闸位命中时 staged 已指向正式源文本，一删就等于「这次保存被拒」并清掉用户草稿，
+            // 与 KDoc 不变量①（源文本与包都不动）相反。
             if (staged == null || !staged.renameTo(File(dir, SOURCE_NAME))) {
                 staged?.delete()
                 Diagnostics.w(TAG, "保存中止: 源文本改名失败（跳过 ${parsed.skipped} 行，磁盘未变）")

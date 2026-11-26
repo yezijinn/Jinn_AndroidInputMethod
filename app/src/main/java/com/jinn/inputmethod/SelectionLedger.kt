@@ -15,7 +15,7 @@ import javax.crypto.SecretKey
  * 频次由行数体现（同一个词出现 N 行即选了 N 次），加载/合并时汇总。
  *
  * 「只增」的边界（按实现，2026-10-26 订正）：整份**重写**只有明文迁移与补首行标识两处
- * （[migrateIfNeeded]，内容一条不丢、次序不变）；整份**删除**只有用户在词库页关掉记录时的
+ * （[migrateIfNeeded]，内容一条不丢、次序不变）；整份删除只有用户在词库页关掉记录时的
  * 「关闭并删除」（[deleteFile]）那一次；残行截尾（[truncateTrailingPartialLine]）只切上次写
  * 中断的半行。除此之外系统不会删减任何已记录的选择。
  *
@@ -211,12 +211,12 @@ object SelectionLedger {
     /**
      * 把已排队的内容全部写盘（收键盘 / 退出时调用；不抛异常）。
      *
-     * @param timeoutMs 调用方**最多**等多久（默认 `FLUSH_TIMEOUT_MS`）。超时只缩短「这一等」，
+     * @param timeoutMs 调用方最多等多久（默认 `FLUSH_TIMEOUT_MS`）。超时只缩短「这一等」，
      *   不会丢队：写盘在 [writer] 线程上照旧跑完，失败的行留队等下一次 record / flush 带走。
      *   ⚠ 边界：队列是进程级内存，**进程随后被杀**则那几行随进程消失（`onDestroy` 之后没有「下一次」）。
      *   正常路径一次追加几十微秒，300ms 覆盖得住；只有队列里压着上万行批量导入才会超时。
      *   销毁路径传 `JinnIme.FLUSH_ON_DESTROY_MS`（300ms）—— 那条路径阻塞的是主线程（BUG.md L-1451）。
-     * @return 队列已空**且**本次写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
+     * @return 队列已空且本次写入确实成功。超时 / 被打断 / 磁盘或密钥失败都返回 false。
      *
      * 判据必须含 [lastWriteOk]：只看「队列空了」的话，[writeLines] 返回 false（密钥不可用 /
      * 磁盘满）照样算写空 ⇒ 导入路径会把「0 条入库」报成「已追加 N 条」（N4）。
@@ -419,7 +419,7 @@ object SelectionLedger {
         if (!needsMigration(file)) return MigrateOutcome.UP_TO_DATE
         val text = if (file.isFile && file.length() > 0L) file.readText(Charsets.UTF_8) else ""
         // ① 首行标识不见了（外部改写 / 部分恢复 / 手工替换），但内容是逐行密文 ⇒ **只重写首行**。
-        //    这条分支不修的话：下面的明文 parse 会把 "1:…" 当成「没有读音的词」，
+        //    这条分支不修的话：下面的明文 parse 会把 `1:…` 当成「没有读音的词」，
         //    再用「加密后的乱码」原子覆盖原件 —— 页面与导出件全变 base64 乱码（N3）。
         if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
             return if (reheader(file, text)) MigrateOutcome.REWRITTEN else MigrateOutcome.FAILED
@@ -649,7 +649,7 @@ object SelectionLedger {
                 f.readText(Charsets.UTF_8)
             }
             // 判据是「首行是标识」**或**「内容形态就是逐行密文」：后者兜住首行标识被删的情况，
-            // 绝不给明文 parse 出口 —— 那把 "1:…" 读成 base64 乱码词，用户视角就是台账全毁（N3）
+            // 绝不给明文 parse 出口 —— 那把 `1:…` 读成 base64 乱码词，用户视角就是台账全毁（N3）
             if (LedgerCrypto.looksEncrypted(text) || LedgerCrypto.looksLikeRecords(text)) {
                 encryptedReadVerdict(text, decodeRecords(text, key))
             } else {
