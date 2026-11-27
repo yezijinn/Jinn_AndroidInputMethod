@@ -30,8 +30,8 @@ import javax.crypto.spec.SecretKeySpec
  *  · 已在内存中的明文 —— Java `String` 不可擦除。
  *
  * 与 Keystore 路径的分工：Keystore 可用时**永远**走 [CredentialCrypto]（密钥材料不出安全硬件），
- * 本类只在它失败时兜底（见 `Prefs.writeCredential`）。性能上软件 GCM 比 Keystore 快一个量级，
- * 但安全等级低一档，所以不抢主路。
+ * 本类只在它失败时兜底（见 `Prefs.writeCredential`）。软件 GCM 少了 Keymaster 往返，
+ * 单次更快，但安全等级低一档，所以不抢主路。
  *
  * 以 [File] 为参数（而不是 `Context` / `filesDir`）：纯 JVM 单测能真跑往返与「重启语义」。
  */
@@ -111,7 +111,7 @@ object LocalCredentialCipher {
      * 解密 [stored]（必须带 [PREFIX]）。
      *
      * @return 明文；密钥件缺失 / 密文被改 / 形态不对一律 null —— 这些重试一万次也是同一结论，
-     *         调用方按 `DecryptOutcome.Permanent` 处理（等价「未配置」，需重填），不是崩溃。
+     *         调用方按 `CredentialCrypto.DecryptOutcome.Permanent` 处理（等价「未配置」，需重填），不是崩溃。
      *         ⚠ 唯一的例外是「密钥件在、这次读失败」（IO 抖动）：同样回 null，
      *         但调用方必须先用 [keyState] 判成 [KeyState.UNREADABLE] 再按**暂时**处理（不缓存）。
      *
