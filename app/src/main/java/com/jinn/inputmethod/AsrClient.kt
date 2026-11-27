@@ -266,8 +266,8 @@ class AsrClient(
         idleCloseScheduled = false
         if (userClosed) return
         // 在途任务还没清：此刻关连接会把 final 结果丢掉。先延后重排，但**只延后有限次** ——
-        // `acceptingTask` 的清除权在调用方（它有 60s 兜底），若那条兜底没走到
-        // （例如结果被丢弃且没人复位），无限重排等于连接永生、待机唤醒照旧。
+        // `acceptingTask` 由 final 回包 / 用户取消 / 断连清除；自建后端的 60s 兜底只复位提示、
+        // 不清闸门（见 JinnIme.recognizeTimeout），若始终没人清，无限重排等于连接永生、待机唤醒照旧。
         if (sendingTask != null || acceptingTask != null) {
             if (idleCloseDeferrals >= IDLE_CLOSE_MAX_DEFERRALS) {
                 Diagnostics.w(

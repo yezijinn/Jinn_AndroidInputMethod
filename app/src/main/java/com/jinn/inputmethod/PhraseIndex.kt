@@ -4,7 +4,7 @@ package com.jinn.inputmethod
  * 词库二进制索引（只读）。
  *
  * 旧的形态是「xz 文本 + 百万级 HashMap」，每次启动都要解压、逐行解析、建哈希表
- * （真机实测基础包 6~10.7s、进程 PSS 305MB）。改索引后解析和建表都挪到构建期
+ * （实测基础包 6~10.7s、进程 PSS 305MB）。改索引后解析和建表都挪到构建期
  * （`tools/dict_builder/build_dict_index.py`），运行时只解压字节、把长度数组还原成偏移，
  * 查询用二分查找按字节比较，命中才解码成 String，不再需要哈希容器。
  *
@@ -23,7 +23,7 @@ package com.jinn.inputmethod
  *
  * 读取一律走 [java.nio.ByteBuffer]，两种承载：APK 里的索引先解 xz 再 `wrap`；
  * 设备端的 `.idx` 缓存用 [ofMapped] 直接映射（零拷贝，页可被内核回收，省下几十 MB 私有堆）。
- * 两者共用同一套偏移/二分/解码逻辑，行为一致由 `IndexParityTest` 对拍。
+ * 两者共用同一套偏移/二分/解码逻辑，行为一致由 `IndexMappedParityTest` 对拍。
  *
  * 线程安全：构造完成后完全不可变，可被多线程并发读取（IME 主线程查询 + 后台 merge 各读各的）。
  */
@@ -300,7 +300,7 @@ internal class PhraseIndex private constructor(
          * 峰值（L-1143）：两段大段（键区 / 词区）边解析边写临时件，堆上只留两个长度数组
          * （≤ keyCount 与 2×keyCount 字节，30 万键约 0.9MB）与最终产物一份 ⇒ 构建期堆峰值 ≈ 1× 索引体积。
          * 原先四段各留一个 `ByteArrayOutputStream`：装配时它们与产物同时在堆上 ⇒ 峰值 ≈ 2×
-         * （part4 索引约 9MB 时白占 9MB，单段超 12MB 还会落进 ART 大对象空间）。
+         * （part4 索引约 9MB 时白占 9MB，单段超 12KB 还会落进 ART 大对象空间）。
          * 绝不把百万行读成一个 List（可选包 114 万行 ≈ 150MB+，会顶爆堆）。
          *
          * @param lines 形如 `拼音<TAB>词1|词2` 的行；流水线已保证按键升序（乱序即抛错，
