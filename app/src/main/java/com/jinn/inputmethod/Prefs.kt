@@ -252,7 +252,7 @@ class Prefs(private val appContext: Context) {
      * 也返回 true。这条曾经缺失 ⇒ 原生升级（旧开关 true + 覆盖安装 + 不导入备份）只开档 2，
      * 而导出又把这个回落值写进备份、把旧键丢掉，于是「升级丢档 3 → 备份固化 → 换机永久丢」。
      * 修法两种都可行：① 这里补回落（本处采用，getter / 导入 / 导出三条路径自然一致）；
-     * ② 改成一次性迁移（`ensureRareTiersMigrated()` 按旧键写入两个新键，与 `ensureSkinSlotsMigrated` 同款）
+     * ② 改成一次性迁移（按旧键写入两个新键，写法同 [ensureSkinSlotsMigrated]）
      * —— 真值只剩一份，但要新增调用点，留待将来真加档位时一并做。
      */
     var rareTier3: Boolean
@@ -1682,7 +1682,7 @@ class Prefs(private val appContext: Context) {
      *
      * ⚠ 与另外三个路径键同口径走 [putDefaulted]（2026-10-01，L-288）：`joinUrl` 内部只做
      * `trim()`，挡不住从网页复制时混进来的 NBSP / 零宽字符，而解析结果在两处被消费
-     *（[hasCredentialFor] 与 [openAiConfig]）—— 口径不一致就会出现「摘要说未配置、却能翻译」。
+     * （[hasCredentialFor] 与 [openAiConfig]）—— 口径不一致就会出现「摘要说未配置、却能翻译」。
      */
     var openAiBaseUrl: String
         get() = defaulted(strOr(KEY_OPENAI_BASE_URL, "").orEmpty(), OpenAiTranslator.DEFAULT_BASE_URL)

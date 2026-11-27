@@ -268,12 +268,12 @@ internal object TranslationClient {
         )
         // Provider 可以要求更宽的时间预算（大模型首字延迟不可控）：0 = 用客户端默认。
         // ⚠ 必须**派生 client** 同时放宽 readTimeout —— 只设 `Call.timeout()`（整体预算）时，
-        // client 级的 20s 读超时依旧先生效（真机实测：20s 到点抛 SocketTimeoutException）。
+        // client 级的 20s 读超时依旧先生效（20s 到点抛 SocketTimeoutException）。
         // ⚠ 写超时同样要派生（2026-10-03，L-703）：基线 client 从未设置 `writeTimeout`
         // ⇒ 一直是 OkHttp 默认的 **10s**。各家 body 可达 100~300 KB（DeepL 上限 100 KB、
         // Azure 50 KB，JSON 转义后更大），弱网（200 kbps）下 300 KB ≈ 12 s > 10 s ⇒
-        // `SocketTimeoutException` 被归成 NETWORK「网络错误，请检查网络后重试」，而网络其实是通的，
-        // 用户会反复重试、每次真计费。三处超时必须一起派生。
+        // `SocketTimeoutException` 属 InterruptedIOException，会被归成 TIMEOUT「请求超时，请重试」，
+        // 属假超时（网络其实是通的），用户会反复重试、每次真计费。三处超时必须一起派生。
         // `newBuilder()` 复用连接池与线程池，成本可忽略。
         val client = if (provider.callTimeoutSec > 0) {
             http.newBuilder()

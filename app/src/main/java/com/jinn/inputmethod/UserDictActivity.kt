@@ -43,7 +43,7 @@ import java.util.concurrent.Executors
  * **默认关闭**：进入本页时若未开启，先弹说明框，逐字输入「我明白」才开启；
  * 关闭则先提示导出，再二次确认（同样输入「我明白」），确认后删除 `user_picks.txt`。
  */
-/** 本页日志标识（伴生对象是 private，日志用固定串） */
+/** 本页日志标识：固定串，日志统一走它 */
 private const val TAG_NAME = "UserDictActivity"
 
 /** 三列行的列标识：列序靠命名 tag 承载，不靠 addView 的调用顺序 */
