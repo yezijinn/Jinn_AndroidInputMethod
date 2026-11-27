@@ -770,7 +770,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             // 正在编辑的那个框必须给真值：掩码换真值之后 `isMaskedDisplay` 立刻变 false，
             // 只判这两个条件的话密码转换会重新装上去，用户看到的是一整排点 ——
             // 更糟的是点数 = 真实长度，把 [CredentialMask]「固定 8 点不泄露长度」也一起破了
-            // （2026-11-01 真机实测：16 位 Key 聚焦后显示 19 个点）。FLAG_SECURE 已在窗口上。
+            // （2026-11-01 真机复核：16 位 Key 聚焦后显示 19 个点）。FLAG_SECURE 已在窗口上。
             val revealed = show || field.hasFocus() || isMaskedDisplay(field)
             val method = if (revealed) null else PasswordTransformationMethod.getInstance()
             field.transformationMethod = method

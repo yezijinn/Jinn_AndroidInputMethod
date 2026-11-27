@@ -73,7 +73,7 @@ internal object ConfigBackupManager {
     internal const val CLIP_EXPORT_BYTE_BUDGET = 12L * 1024 * 1024
 
     /**
-     * 剪贴板导出/预览的分页步长（BUG.md L-102）。
+     * 剪贴板导出的分页步长（BUG.md L-102）。
      *
      * 这不是纯粹的性能参数：`ClipboardDb.recentPageAfter` 会**解密整页每一行**并返回带正文的列表，
      * 所以页宽就是一次解密窗口 —— 上界 `CLIP_PAGE × MAX_ITEM_BYTES(256KB) × 放大 2.5`。

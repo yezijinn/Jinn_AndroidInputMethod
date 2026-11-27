@@ -1156,7 +1156,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
             minimumHeight = dp(96)
-            // 竖长图（1080×2280 等）按比例会撑满整个对话框、把动作行挤出屏幕（2026-10-10 真机实测）：
+            // 竖长图（1080×2280 等）按比例会撑满整个对话框、把动作行挤出屏幕（2026-10-10 实测）：
             // 限高 360dp，图仍按 FIT_CENTER 缩放，按钮始终可见
             maxHeight = dp(360)
             contentDescription = TEXT_IMAGE_CELL
@@ -1179,7 +1179,7 @@ class ClipboardHistoryActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        // 动作分**两行**（2026-10-11 真机实测）：一排放不下这些入口 —— 1080px 屏上第 4 个起被压成
+        // 动作分**两行**（2026-10-11 实测）：一排放不下这些入口 —— 1080px 屏上第 4 个起被压成
         // 一列一列的字，删除 / 关闭 直接挤出屏幕。按语义分组：上排「出库」（复制 / 保存 / 转移），
         // 下排「管理」（收藏 / 删除 / 关闭）；每排最多 3 个，窄屏也能一眼读完
         fun makeBtnRow(): LinearLayout = LinearLayout(this).apply {
