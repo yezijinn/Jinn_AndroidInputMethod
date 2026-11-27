@@ -141,7 +141,7 @@ internal object ClipboardSearch {
      *
      * 判据 = **除 ASCII 空格以外精确**：`clean` 会删的（C / Z 类，含未分配与增补平面）由
      * [FavoriteSymbols.hasCleanable] 单遍判；NFKC 会变的（全角 ASCII / 兼容字符 / 各类分隔符）
-     * 由 [Normalizer.isNormalized] 整体判。都比旧判据宽 —— 旧判据只认 4 个字面量 + `Cf`，
+     * 由 [Normalizer.isNormalized] 整体判。都比旧判据宽 —— 旧判据只认一段全角 ASCII 范围 + 3 个字面量 + `Cf`，
      * `①`、`Ⅰ`、半角假名、`Cs/Co/Cn`、非 3000/A0 的 Z 类都会漏（那些内容明明在库里却搜不到）。
      *
      * **ASCII 空格有意不触发**：它是 Z 类，`clean` 会删；若算进来，每段多词文本都会白跑折叠。
