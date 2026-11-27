@@ -390,8 +390,8 @@ internal fun applyTemplateEnsuringText(
                 val value = trimmed.substringAfter(':').trim()
                 // 名字必须是合法 HTTP token（RFC 7230）：中文名 / 含空格的名字会让
                 // `Request.Builder.header` 抛 IllegalArgumentException，被 TranslationClient
-                // 兜成 PARAM → 提示「请检查语言设置」，与真实原因（自定义 Headers 写错）
-                // 完全无关（2026-09-30）。
+                // 兜成 CREDENTIAL（2026-10-02，L-429）→ 提示「凭据含不可见字符」，与真实原因
+                // （自定义 Headers 写错）无关（2026-09-30）。
                 // **值同样要校验**（探针实测）：OkHttp 对值只允许 `\t` 与 U+0020..U+007E，
                 // 中文值、或从网页复制来的 NBSP / ZWSP（`trim()` 不删它们！）都会抛同一个异常、
                 // 得到同一个误导提示。

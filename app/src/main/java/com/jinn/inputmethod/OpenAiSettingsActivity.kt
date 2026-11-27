@@ -25,7 +25,7 @@ import java.util.Locale
  *  · 端点路径与响应解析路径都可配（`/chat/completions`、`output_text`…）。
  *
  * 「获取模型 / 测试连接」走 `GET {Base}{ModelsPath}`：拿不到时不判死 —— 该接口不是
- * OpenAI 兼容的必选项，用户照样可以手填 Model。最近一次成功结果写入缓存供下次直接选。
+ * OpenAI 兼容的必选项，用户照样可以手填 Model。最近一次成功结果只落缓存，随配置备份带走。
  */
 class OpenAiSettingsActivity : Activity() {
 
@@ -73,7 +73,7 @@ class OpenAiSettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 凭据页防截屏 / 录屏 / 投屏 / 最近任务缩略图（2026-09-30 加固防泄露），
-        // 与 TranslationSettingsActivity 同款（那里有完整的取舍说明）：本页有 API Key 输入框。
+        // 与 TranslationSettingsActivity 同款（完整取舍见 `SettingsActivity.securePasswordDialog`）：本页有 API Key 输入框。
         // ⚠ 投屏（ADB / scrcpy）下整页不可见是**预期行为**，不是缺陷。
         window.setFlags(
             android.view.WindowManager.LayoutParams.FLAG_SECURE,
@@ -790,7 +790,8 @@ const val TEXT_EXTRA_JSON_HINT =
     // [TEXT_ENDPOINT_NEEDS_HTTPS]，键盘 toast / 翻译设置页状态行 / 本页的
     // Base URL 红字与自检提示共用一份措辞 —— 此前三处各写一遍且措辞不同，改一处不会红。
     // 运行期对明文地址一律拒发（归 INSECURE），而保存、状态摘要、「已配置」三处此前全部放行
-    // `http://` ⇒ 配置信任链断裂；平台层对用户自填域名没有兜底，本页是唯一的把关点（L-513）。
+    // `http://` ⇒ 配置信任链断裂；三处现都走 `endpointReady`（L-811），运行期 `providerOf` 的
+    // `isReady` 再全判一次，INSECURE 只剩纵深防御（L-817）。
 
     const val TEXT_EXTRA_JSON_INVALID =
         "自定义 JSON 不可用：解析失败、开了 stream（本客户端按非流式解析）、删必需键（model / messages）、或覆盖 messages（原文在里面）"
