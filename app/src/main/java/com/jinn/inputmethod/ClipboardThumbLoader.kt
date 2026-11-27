@@ -18,7 +18,7 @@ import java.util.concurrent.Executors
  *
  * 内存纪律：按**字节数**限容的 [LruCache]（12MB，与图库面板同值）；输入法是常驻进程，
  * 缩略图不设上限会被系统杀掉（表现为键盘突然消失）。
- * 线程纪律：3 线程（与图库面板同值）；解码全在池内，主线程只 `setImageBitmap`。
+ * 线程纪律：固定 3 线程（图库池低档收敛为 1，此处不缩放）；解码全在池内，主线程只 `setImageBitmap`。
  */
 internal object ClipboardThumbLoader {
 
