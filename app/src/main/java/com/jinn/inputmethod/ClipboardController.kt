@@ -348,7 +348,7 @@ class ClipboardController(context: Context) {
                 // 空读上限：`read(len>0)` 允许非阻塞流返回 0，不设闸的话一个持续返回 0 的
                 // provider 会永久占住本条长活线程（长活池是单线程 FIFO，图库列目录、
                 // 导出全部图片、图片落盘与 GC 会全部排队，只能重启恢复）。与同仓
-                // `readBounded` / `Diagnostics.readFully` 同口径。
+                // `readBounded` / `ConfigCrypto.readFully` 同口径。
                 var emptyReads = 0
                 while (n < head.size) {
                     val r = input.read(head, n, head.size - n)

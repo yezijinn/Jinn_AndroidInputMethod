@@ -155,8 +155,8 @@ internal val TranslationProviderId.supportsActions: Boolean
  * 「端点必须以 https:// 开头」的**唯一文案**（2026-10-03，L-816）。
  *
  * 此前同一件事在三处各写一遍且措辞不同：`TranslationError.INSECURE.message`（键盘 toast）、
- * OpenAI 设置页的 `TEXT_NEED_HTTPS`（Base URL 红字 + 自检提示）、翻译设置页的 `TEXT_OPENAI_NEED_HTTPS`
- * （状态行）—— 改一处不会红（零守卫），用户跨页却看到三种说法。
+ * OpenAI 设置页 Base URL 红字 + 自检提示、翻译设置页状态行 —— 改一处不会红（零守卫），
+ * 用户跨页却看到三种说法。现统一为下方常量。
  *
  * ⚠ 一处定义、三处引用；新增第四处前先想清楚能不能引用它。
  * `http://` 不发送的理由要写进文案：那是**安全**限制（Bearer 凭据会明文上链路），不是「不支持」。
