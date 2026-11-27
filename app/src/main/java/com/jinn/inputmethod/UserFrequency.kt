@@ -18,7 +18,7 @@ import javax.crypto.SecretKey
  *
  * 存储：`filesDir/user_freq.txt`（明文形态是 `词<TAB>权重<TAB>天`），落盘走 BackgroundIo + 防抖 2s，
  * 窗口内会把「最后一次」排成尾沿任务补写（只做前沿丢弃的话，进程被 LMK 直杀时
- * 最近几次学习会丢，而 [flush] 只在收尾与备份操作时才跑）；原子落盘（临时文件 + 改名）；
+ * 最近几次学习会丢，而 [flush] 只在收尾、备份与重启前才跑）；原子落盘（临时文件 + 改名）；
  * 退出时 [flush] 同步补一次。上限 [MAX_ENTRIES] 条，解析时按天衰减后低于 [MIN_WEIGHT] 的
  * 条目被跳过，文件稳定在几十 KB。
  *

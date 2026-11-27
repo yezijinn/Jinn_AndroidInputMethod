@@ -201,7 +201,7 @@ class ClipboardCustomizeActivity : Activity() {
      * 把盘上**新值**同步进草稿，但只动「本页没编辑过」的键（L-1106）。
      *
      * 判据：草稿某键仍等于**旧快照**（进入页面时的盘上值）⇒ 按值判没动过 ⇒ 跟随新盘上值；
-     * 不等 ⇒ 在本页改过 ⇒ **保留草稿**，绝不覆盖，否则会冲掉还没保存的编辑。
+     * 不等 ⇒ 在本页改过 ⇒ 保留草稿，绝不覆盖，否则会冲掉还没保存的编辑。
      * 按值比较不记编辑历史：改过又改回快照值按未编辑处理（本页可接受的近似）。
      *
      * 与 [confirmReset] 的区别：重置是「丢弃全部编辑、回到进入时的快照」，这里是「保留编辑」。
@@ -447,7 +447,7 @@ class ClipboardCustomizeActivity : Activity() {
         ))
         card5.addView(makeHint(TEXT_LAYOUT_HINT))
         // 这对参数是图库与剪贴板两个网格共享的布局偏好，与「剪贴板历史」总开关无关：
-        // 用 editable（含总开关关闭）会把只想调图库布局的人挡在门外（BUG.md L-1247）
+        // 只按解锁态置灰，不因总开关关闭挡住只想调图库布局的人
         dim(card5, unlocked)
         PageStyle.addCard(list, card5)
 
@@ -844,7 +844,7 @@ class ClipboardCustomizeActivity : Activity() {
             "图片文本独立统计淘汰：调小只删最旧非收藏图片，不动文本" +
                 "图片独立备份「剪贴板历史管理→图片→导出全部图片」"
 
-        // ── 图片显示与收藏（2026-10-12）──
+        // ── 图片显示与收藏（2026-10-12） ──
         const val TEXT_IMAGE_BEHAVIOR_TITLE = "图片显示与收藏"
         const val TEXT_IMAGE_IN_ALL = "图片允许显示在「全部」分组"
         const val TEXT_FAV_MOVE_OUT = "收藏图片时移到「图库」目录"
@@ -852,7 +852,7 @@ class ClipboardCustomizeActivity : Activity() {
                 "收藏图移动：收藏图片时把原图放入「图库快贴」绑定目录" +
                 "关闭（默认）则收藏图仍加密保存在本输入法内部,外部不可见"
 
-        // ── 缩略图布局（2026-10-11）──
+        // ── 缩略图布局（2026-10-11） ──
         const val TEXT_LAYOUT_TITLE = "缩略图布局（与图库快贴共用）"
         const val TEXT_LAYOUT_COLUMNS = "每行张数"
         const val TEXT_LAYOUT_HEIGHT = "缩略图行高"
