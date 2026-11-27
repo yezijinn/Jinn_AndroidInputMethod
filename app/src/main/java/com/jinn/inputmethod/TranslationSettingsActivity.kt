@@ -257,8 +257,8 @@ class TranslationSettingsActivity : Activity() {
      * 这次改动**是不是用户做的**。
      *
      * ⚠ 必须含 [View.isAccessibilityFocused]（2026-10-03，L-758）：读屏与外接键盘选下拉**不产生触摸事件**
-     *   ⇒ 少了这一位，TalkBack 双击选中的服务方 / 目标语言会被判成「不是用户动的」而**不落盘**，
-     *   而界面早已切到对应区块，用户以为生效了。姊妹页 `OpenAiSettingsActivity` 现走 [UserAwareSpinner]。
+     *   ⇒ 少了这一位，TalkBack 双击选中的目标语言会被判成「不是用户动的」而**不落盘**，
+     *   而下拉框早已显示新值，用户以为生效了。姊妹页 `OpenAiSettingsActivity` 现走 [UserAwareSpinner]。
      */
     private fun isUserDriven(view: View): Boolean =
         view.isFocused || view.isPressed || view.isAccessibilityFocused

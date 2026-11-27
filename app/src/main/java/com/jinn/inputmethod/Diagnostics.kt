@@ -607,46 +607,40 @@ private const val LOG_SEGMENTS_KEPT = 2
             .append(" [").append(Thread.currentThread().name).append("] ")
             // 落盘走护栏（脱敏 + 截断）；logcat 上面已用原文输出
             .append(sanitizeForFile(msg)).append('\n')
-        // 堆栈：脱敏 + 非帧行逐行处理（见 [flattenNonFrameLines]）。异常 message 可嵌用户可控串
+        // 堆栈：脱敏 + 非帧行摊平（见 [flattenNonFrameLines]）。异常 message 可嵌用户可控串
         // （Base URL、host、导入包里的设备名、JSON 片段），带一个换行就能伪造含时间戳与级别的假日志行，
         // 与正文护栏动机逐字相同。帧行（`at …`）由编译器生成，原样保留才可读；整体不截断（会砍关键帧）。
         tr?.let {
             val stack = redactSensitive(stackTraceOf(it))
-            // 逐行判定而非「只切首段」（BUG.md L-1385）：`printStackTrace` 的完整形态是
+            // 按段判定而非「只切首段」（BUG.md L-1385）：`printStackTrace` 的完整形态是
             // `类名: message` + 帧行 + `\tCaused by: 类名: message` + 帧行 + `\tSuppressed: …`。
             // cause / suppressed 的 message 同样用户可控（Base URL、host、导入包设备名、JSON 片段），
             // 落在首个 `\n\tat ` 之后 ⇒ 只护首段仍可伪造完整日志行。
-            // 判据：只有**帧行**（`\tat …` / `\t... N more`）原样保留；其余行替换 `\r` / `\0`。
-            // ⚠ 换行已在拆行时消耗，片段内没有可替换目标 ⇒ message 自带的换行仍独立成行，
-            // 伪造并未堵住（台账 L-1385 待复核）。
+            // 判据：只有**帧行**（`\tat …` / `\t... N more`）起新行，其余换行一律摊平成 `⏎`。
             sb.append(flattenNonFrameLines(stack)).append('\n')
         }
         appendToFile(dir, sb.toString())
     }
 
     /**
-     * 处理堆栈里的非帧行：只有 `\tat …` / `\t... N more` 这类编译器生成的帧行原样保留。
+     * 处理堆栈：帧行（`\tat …` / `\t... N more`）原样起新行，其余内容摊平到同一行。
      *
-     * `Caused by:` / `Suppressed:` 段以 `\t` 开头，但它们是异常 message、用户可控，
-     * 带一个换行就能在日志文件里插入一条含时间戳与级别的假日志行（且随诊断包外传）。
-     *
-     * ⚠ 现行实现先按 `\n` 拆行、再对每行替换 `\r` / `\0`：片段内已无换行可改，
-     * message 自带的换行仍原样落在独立行 —— 上述伪造并未被堵住（台账 L-1385 待复核）。
+     * `Caused by:` / `Suppressed:` 段虽以 `\t` 开头，携带的却是异常 message、用户可控：
+     * 保留换行就能在日志文件里插入一条含时间戳与级别的假日志行（且随诊断包外传）。
+     * 因此除帧行外一律接在上一行尾部（换行 → `⏎`，`\r` / `\0` → 空格），
+     * 首行之后不再有任何物理换行 —— 与 [sanitizeForFile] 同一判据（L-1385）。
      * 整体不截断：截断会砍掉关键帧。
      */
-    private fun flattenNonFrameLines(stack: String): String {
+    internal fun flattenNonFrameLines(stack: String): String {
+        val lines = stack.split('\n')
         val flat = StringBuilder(stack.length + 16)
-        var start = 0
-        while (start <= stack.length) {
-            val nl = stack.indexOf('\n', start)
-            val end = if (nl < 0) stack.length else nl
-            val line = stack.substring(start, end)
-            flat.append(
-                if (isFrameLine(line)) line else flatten(line)
-            )
-            if (nl < 0) break
-            flat.append('\n')
-            start = nl + 1
+        for ((idx, line) in lines.withIndex()) {
+            when {
+                idx == 0 -> flat.append(flatten(line))
+                isFrameLine(line) -> flat.append('\n').append(line)
+                line.isEmpty() && idx == lines.lastIndex -> Unit
+                else -> flat.append('\u23CE').append(flatten(line))
+            }
         }
         return flat.toString()
     }

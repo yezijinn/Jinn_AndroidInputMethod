@@ -191,6 +191,22 @@ class DiagnosticsSanitizeTest {
     }
 
     @Test
+    fun `堆栈里的多行 message 被摊平，不能伪造日志行`() {
+        // 异常 message 可含换行（服务端 / HTTP 错误体片段）：摊平前它能落成一条独立的假日志行
+        val stack = "java.lang.IllegalStateException: boom\n" +
+            "2026-11-27 10:00:00 E/Fake [main] 伪造行\n" +
+            "\tat a.b.C.d(C.kt:1)\n" +
+            "\tCaused by: java.io.IOException: 换行\n\t也在 cause 里\n" +
+            "\t... 3 more"
+        val out = Diagnostics.flattenNonFrameLines(stack)
+        assertFalse("伪帧不能自成一行：$out", out.lineSequence().any { it.startsWith("2026-11-27") })
+        assertTrue("首行保留：$out", out.startsWith("java.lang.IllegalStateException: boom⏎"))
+        assertTrue("真帧行原样保留：$out", out.contains("\n\tat a.b.C.d(C.kt:1)"))
+        assertTrue("cause 的 message 摊平：$out", out.contains("⏎\tCaused by: java.io.IOException: 换行⏎\t也在 cause 里"))
+        assertTrue("尾帧保留：$out", out.contains("\n\t... 3 more"))
+    }
+
+    @Test
     fun `超长正文截断并标注原长`() {
         val out = Diagnostics.sanitizeForFile("x".repeat(600))
         assertTrue("保留前 512 字", out.startsWith("x".repeat(512)))
