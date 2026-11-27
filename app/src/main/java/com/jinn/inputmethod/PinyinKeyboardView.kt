@@ -453,7 +453,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val next = factor?.coerceIn(FloatingKeyboard.MIN_STRETCH, FloatingKeyboard.MAX_STRETCH)
         // 底排字与图标内边距受**两条轴**共同约束：宽度决定「两字标签会不会横向顶出键框」，
         // 高度决定「两行标签 / 回车箭头会不会被压成一条线」（100% × 60% 时行高只剩 33dp，
-        // 而图标的 13dp 内边距不变 ⇒ 箭头只剩 7dp，真机实测已经看不见）。
+        // 而图标的 13dp 内边距不变 ⇒ 箭头只剩 7dp，实测已经看不见）。
         applyFloatingTextScale(minOf(widthFactor, next ?: 1f))
         if (next == floatingStretch) return
         floatingStretch = next
@@ -610,7 +610,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 否则 [lastCandidates]。
      *
      * 三条判据（三角 / 展开排数 / 预取量）都必须用它，不能直接读 `lastCandidates`：进预测态时它
-     * **不清空**（只有「无输入且无预测」那一支才清）⇒ 读到的是**上一次查询**的条数与字宽。
+     * **不清空**（只有「无输入且无预测」那一支才清）⇒ 读到的是上一次查询的条数与字宽。
      * 条数要的是全量（渲染侧另有首屏 [INITIAL_RENDERED_CANDIDATES] 条截断；预测词 ≤ `MAX_PREDICTIONS`(6)
      * 条不受影响）。
      */
@@ -1156,7 +1156,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         orientation = VERTICAL
         // 必须显式 `attachToRoot = false`：attachToRoot=true 时 inflate 返回的是调用方 this
         // （不是 XML 根），直接拿它当背板引用会把背板铺成两层：视图自身一层 + XML 根一层；
-        // 两层同 alpha 叠加令背板等效不透明度翻倍（真机实测 85,86,90 = 0.2×237 + 0.8×(0.2×237)，
+        // 两层同 alpha 叠加令背板等效不透明度翻倍（实测 85,86,90 = 0.2×237 + 0.8×(0.2×237)，
         // 单层应只有 47；屏幕最底那条没有按键覆盖的背板带最明显）。
         // 这里显式 addView 并保存返回的 XML 根：语义清晰，也不依赖「根布局不能改成 <merge>」这类隐含前提。
         val root = LayoutInflater.from(context).inflate(R.layout.keyboard_pinyin, this, false)
@@ -1828,7 +1828,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
                 searchPanel?.appendSearch(text)
             } else {
                 // 标点是即时上屏：不先把拼音落定，标点就插到拼音前面
-                // （真机实测：打 bi → 按「。」→ 空格取首候选，正文「。比」，L-1443）
+                // （实测：打 bi → 按「。」→ 空格取首候选，正文「。比」，L-1443）
                 commitComposing()
                 listener?.onCommitText(text)
             }
@@ -2004,7 +2004,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 键面字形也要跟（「26 键常显大写」开关在现场切换；圆角 / 间隙刷新后 shift 键背景也走这里重建）
         refreshKeyLabels()
         // 候选栏里「已构建」的面（6 个功能按钮 / 符号分组标签 / 候选词容器）读的是构建时刻的
-        // alpha，不重建就保持旧值，拖滑杆松手后会「只生效一半」（真机实测：候选栏底已透、
+        // alpha，不重建就保持旧值，拖滑杆松手后会「只生效一半」（实测：候选栏底已透、
         // 6 个按钮仍是旧档）。
         // 无条件重建，方向面板展开态也一样：面板是运行时 addView 进字母区（`viewLetters` 的子视图），
         // 候选栏重建全链路都不碰 `viewLetters` ⇒ 不存在「重建会把它收回默认布局」的机制
@@ -2132,7 +2132,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      *
      *  - 背板类（键盘底色 kb_bg、面板底 app_bg）：面上没有文字，走 plate 档，可以做得最透；
      *  - 内容面类（条目卡 card_bg、搜索框底 surface_hi）：带文字/内容，走 surface 档；
-     *  - 候选栏底**固定**走 surface 档；空白铺底时与功能按钮**同色**（见 [updateCandidateBarBackground]）；
+     *  - 候选栏底**固定**走 surface 档；空白铺底时与功能按钮同色（见 [updateCandidateBarBackground]）；
      *  - 键面与面板里的按钮同上走 surface 档（键面走 [PinyinKey.setFaceAlpha]，面板按钮走各自
      *    面板的 `applySurfaceAlpha`，它们的背景是 drawable，颜色识别扫不到）；
      *  - 文字一律不变：这里只给「面」的颜色套 alpha（[KeyTransparency.withAlpha]），本功能的
@@ -2156,7 +2156,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
         // 背板只铺一层：[keyboardRoot] 必须是 XML 根（见 init 的说明，attachToRoot=true 时 inflate
         // 返回的是 this）。两层同 alpha 叠加会令背板等效不透明度翻倍（80% → 等效 36%），屏幕最底那条
-        // 没有按键覆盖的背板带最明显（真机实测 85,86,90 = 0.2×237 + 0.8×47，单层应只有 47）。
+        // 没有按键覆盖的背板带最明显（实测 85,86,90 = 0.2×237 + 0.8×47，单层应只有 47）。
         keyboardRoot.setBackgroundColor(
             KeyTransparency.withAlpha(skinToken(skin.plate, R.color.kb_bg), plateAlpha)
         )
@@ -2310,7 +2310,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 把皮肤的「功能键文字 / 图标色」套到键盘内的静态控件上。
      *
      * 功能键的「面」由皮肤接管（见 [applyKeyTransparency]），文字与图标必须同源：
-     * 亮白主题下 `text_primary` 是深色，压在皮肤的深色功能键上会撞色（真机实测：
+     * 亮白主题下 `text_primary` 是深色，压在皮肤的深色功能键上会撞色（实测：
      * 磨砂 / 极光皮肤下空格、回车、大写、删除、候选栏按钮文字不可读）。
      *
      * 默认皮肤的两个覆盖为 null ⇒ 回落到 `text_primary` / `text_secondary`，与历史一致。
@@ -2962,7 +2962,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
 
             // 按住连删时滑出键面即停（BUG.md L-1438）：连续删除是 55ms 的自我重排循环，
             // 唯一的中止条件原先只有抬手 —— 手指拖到键外（用户以为已经取消）仍然一路删到底，
-            // 真机实测 15 字被删到 1 字。用「出键面」而不是 touchSlop 作判据：退格键宽，
+            // 实测 15 字被删到 1 字。用「出键面」而不是 touchSlop 作判据：退格键宽，
             // 按住时手抖几 dp 不该中止；出键面才是用户表达的「我要停」。
             // 停掉后不恢复：手指滑回来再抬也不当一次点击（stopBackspaceRepeat 已清双击计数）。
             MotionEvent.ACTION_MOVE -> {
@@ -3471,7 +3471,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         // 旧条目可能带着列容器的 FrameLayout.LayoutParams（含固定行高）：换成默认的 wrap_content
         // 布局参数，由新容器按需重新下发。
         // 注意：**不能**写成 `layoutParams = null`：`View.setLayoutParams` 拒绝 null，会抛
-        // `NullPointerException: Layout parameters cannot be null`，每次按键必崩（2026-10-18 真机实测）。
+        // `NullPointerException: Layout parameters cannot be null`，每次按键必崩（2026-10-18 实测）。
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3517,10 +3517,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
     private fun obtainCandidateView(): TextView = candidateViewPool.removeLastOrNull() ?: TextView(context)
 
     /**
-     * **增量**把 [CandidateRenderArgs.items] 的 `[from, to)` 区间接到候选容器**尾部**
+     * **增量**把 [CandidateRenderArgs.items] 的 `[from, to)` 区间接到候选容器尾部
      * （追加渲染用，见 [maybeAppendMoreCandidates]）。
      *
-     * 只 `addView`、**不** clear、**不**动滚动位置 —— 这正是「划到末尾追加候选」不再整栏重建 +
+     * 只 `addView`、不 clear、不动滚动位置 —— 这正是「划到末尾追加候选」不再整栏重建 +
      * 回滚 scrollX（用户看到的就是回弹抖动）的关键。双行档按**绝对序号**成列：`from` 恒为偶数
      * （初值 [INITIAL_RENDERED_CANDIDATES]、步长 [RENDERED_CANDIDATES_STEP] 皆为偶，到末尾封顶后
      * 不再追加），故 `(from, from+1), (from+2, from+3)…` 的配对与整棵渲染 `columnsOf` 完全一致。
@@ -3694,7 +3694,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
         val inputNow = composing.toString()
         lastRefreshedInput = inputNow
         // 本帧渲染源（候选 / 预测词）的条数与取样字：三角、展开排数、预取量三条路径必须同源。
-        // 预测态下 `lastCandidates` 是上一次查询的残留（真机实测 40 条，本帧只渲染 6 个预测词），
+        // 预测态下 `lastCandidates` 是上一次查询的残留（实测 40 条，本帧只渲染 6 个预测词），
         // 读它会把 2 排算成 4 排；拿它量字宽又会把 6 个单词的列数算少（挂出本该没有的 ▲）。
         // ▲ 在预测态出场需 `6 > perCol` ⇒ 取样字宽 ≥199px：28sp 的两字词是 196px，差 3px 擦过；
         // 29sp 起即落进本缺口（真机复现：挂 ▲、点开 2 排，修前按 40 条算 4 排）。
@@ -4964,9 +4964,10 @@ class PinyinKeyboardView @JvmOverloads constructor(
      * 槽位：各键 weight=1 平均分配；内边距统一收到 2dp 兜底窄屏溢出
      * （9 键均分 + 8dp 内边距在 320dp 屏上只剩 ≈15dp 内容区，放不下 13sp 两字）。
      *
-     * 注意：定义位置固定在 [buildFunctionButton] **之后**：守卫测试 DocsReferenceTest 用
-     *   `substringAfter("private fun renderFunctionPanel()").substringBefore("private fun buildFunctionButton(")`
-     *   解析常驻按钮顺序并与《功能总览.md》对拍，插进那段切片会把动作排的 label 算进常驻清单。
+     * 注意：定义位置固定在 [buildFunctionButton] **之后**：守卫测试 DocsReferenceTest 先按
+     * `substringAfter("private fun renderFunctionPanel()")` 取尾段，再按
+     * `substringBefore("private fun buildFunctionButton(")` 截头，用这段切片解析常驻按钮顺序
+     * 与《功能总览.md》对拍 —— 插进那段切片会把动作排的 label 算进常驻清单。
      * 注意：本函数只 addView，不得出现 `viewCandidateList.removeAllViews()`（L-809 守卫：字面调用
      *   全仓只允许 1 处，在 recycleCandidateViews 内；清容器由 renderFunctionPanel 开头的
      *   clearCandidateList() 负责）。
@@ -5046,7 +5047,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
             //  - 搜索态：26 键此刻路由到搜索框，文本也必须进搜索词。不判就会把它 `commit`
             //    给宿主 —— 用户在翻剪贴板历史，正文却被插入字符。
             //  - 有拼音串：`commitText` 会**替换**宿主的 composing 区。不先 [commitComposing]，
-            //    打「ni」再点一下，正文只剩刚上屏的那个字（2026-10-21 真机实测；守卫
+            //    打「ni」再点一下，正文只剩刚上屏的那个字（2026-10-21 实测；守卫
             //    `数字行点数字前必须先提交拼音` 按位置钉着）。
             //  - 上屏文本读 **key.label**（而不是构造期的默认数字）：用户把按钮改成「甲」，
             //    点它就得上屏「甲」。读构造期的值会让「改文本」只改外观、不改上屏。
@@ -5102,7 +5103,7 @@ class PinyinKeyboardView @JvmOverloads constructor(
     }
 
     /**
-     * 数字行显隐（**唯一入口**）：唯一数据源 = [Prefs.numberRowEnabled]，另有三条**互斥**判据。
+     * 数字行显隐（**唯一入口**）：唯一数据源 = [Prefs.numberRowEnabled]，另有三条互斥判据。
      *
      * 四条判据各自对应一处「不挡就同屏」的冲突面：
      *  - 开关关 ⇒ GONE。且是 GONE 而不是 `removeView`：`removeView` 会让「谁把子视图藏了、

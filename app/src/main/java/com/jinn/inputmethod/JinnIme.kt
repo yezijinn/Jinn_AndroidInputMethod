@@ -1470,7 +1470,7 @@ class JinnIme : InputMethodService() {
     /**
      * 图库快贴：按宿主声明决定键盘上「图库」入口的显隐。
      *
-     * `EditorInfo.contentMimeTypes` 里声明了图片类型（以 `image/` 开头，或全通配）才显示入口 —— 真机实测这是
+     * `EditorInfo.contentMimeTypes` 里声明了图片类型（以 `image/` 开头，或全通配）才显示入口 —— 实测这是
      * **必要**条件：QQ / TIM / 抖音评论 / QQ 邮箱 / Obsidian 声明为空且拒收，露入口只会白点；
      * 声明了也未必可用（DeepSeek、闲鱼会「假成功」），但那种情况用户没有损失、只是没反应。
      * 声明逐输入框变化（微信进聊天页时先出现一个不声明的框），所以每次输入会话都要重判。
@@ -2255,7 +2255,7 @@ class JinnIme : InputMethodService() {
      * 四角角标：每个角一个 16dp 见方的**纯装饰**视图，里面只画一个 L 形细角标（2dp、半透明）。
      *
      * 不接触摸：角本身就压在「符号 / 回车」这类键的外角上，谁先拿到 ACTION_DOWN，谁就吃掉
-     * 那 16dp 的点位（真机实测：角视图接触摸时，点「符号」左下角毫无反应）。所以触摸交给
+     * 那 16dp 的点位（实测：角视图接触摸时，点「符号」左下角毫无反应）。所以触摸交给
      * [FloatingRootView] 按「位移超过 touchSlop」判定，这里只负责画。
      *
      * 只在悬浮态 VISIBLE —— 非悬浮 GONE，一处都不多占。
@@ -2606,7 +2606,7 @@ class JinnIme : InputMethodService() {
     /**
      * 可用高度 = 屏幕高 − 可用区顶边（状态栏）。
      *
-     * IME 窗口的 `x/y` 是相对**可用区**的（真机实测：`lp.y=300` 的窗口落在绝对 `y=384`，
+     * IME 窗口的 `x/y` 是相对**可用区**的（实测：`lp.y=300` 的窗口落在绝对 `y=384`，
      * 差的正是 84px 状态栏）。夹取与默认位置都要按这块区域算，否则贴底时窗口会被截掉一截。
      */
     private fun floatingAreaHeight(): Int =
@@ -2628,7 +2628,7 @@ class JinnIme : InputMethodService() {
      * 夹取仍按屏幕宽高做，所以即使方向读错也只会「用错一套几何」，不会越界到屏外。
      *
      * ⚠ 判据只看 displayMetrics，不能混入物理屏尺寸：物理尺寸不含旋转，
-     * 横屏态下会判成竖屏（真机实测踩过）。早先试过取两者较小者，已移除 ——
+     * 横屏态下会判成竖屏（实测踩过）。早先试过取两者较小者，已移除 ——
      * 方向判据统一到 displayMetrics（与 [applyGeometryToWindow] 的结论一致）。
      */
     private fun floatingIsPortrait(): Boolean {
@@ -2641,7 +2641,7 @@ class JinnIme : InputMethodService() {
     /**
      * 窗口参数是否已被外部重置（漂移检测）。
      *
-     * 只判两项：宽高掉回框架默认值、**gravity 不再是 TOP|START**。
+     * 只判两项：宽高掉回框架默认值、gravity 不再是 TOP|START。
      * 不判 x/y：它们「看起来对」也可能越界，而越界由 [applyGeometryToWindow] 的夹取负责；
      * 且 x/y 恰是用户拖动的结果，判它会与「拖动后重新套用」混淆。
      *
@@ -2742,7 +2742,7 @@ class JinnIme : InputMethodService() {
                 // 手势中途几何被外部改写（长按换档 / 配置变更 / 方向变更）⇒ 这一手**整体作废**。
                 // 不能只换基线：换档那一刻手指常常已经落到新窗口之外，框架把局部坐标夹到窗边，
                 // `raw` 也随之变成「窗边 + 窗口偏移」而不是手指位置 —— 拿它当初基线会把窗口
-                // 一路甩到屏底（真机实测 y 1617→2288），见 FloatingKeyboard.cornerBaselineStale。
+                // 一路甩到屏底（实测 y 1617→2288），见 FloatingKeyboard.cornerBaselineStale。
                 val current = floatingGeometry
                 if (current != null && current != floatingDragApplied) {
                     floatingGestureStale = true
@@ -2822,7 +2822,7 @@ class JinnIme : InputMethodService() {
      * 悬浮窗口根：把手 + 内容 + 四角角标。
      *
      * 四角缩放为什么不挂在角视图上：16dp 的角正好压着「符号 / 回车」这类键的外角，
-     * 角视图一旦吃掉 ACTION_DOWN，那 16dp 就成了按键的死区（真机实测：点「符号」的左下角
+     * 角视图一旦吃掉 ACTION_DOWN，那 16dp 就成了按键的死区（实测：点「符号」的左下角
      * 毫无反应，而它本来就是最容易按到的地方）。所以改成在**根容器**上按手势判定：
      *
      *  - 按下的点位落在四角 16dp 内 ⇒ 只「记住」这个角，事件照旧往下发给键 / 把手；
@@ -2917,7 +2917,7 @@ class JinnIme : InputMethodService() {
 
         /**
          * 落在四角、但底下没有任何子视图接手（面板底边那条透明带）时，DOWN 会落到根自己身上
-         * —— 真机实测：右下角最外侧约 16px 就是这么一段死区，从那里拖完全没反应。
+         * —— 实测：右下角最外侧约 16px 就是这么一段死区，从那里拖完全没反应。
          * 这里把角上的 DOWN 也接住，之后与拦截路径走同一套「过 slop 才动手」。
          */
         override fun onTouchEvent(ev: MotionEvent): Boolean {
@@ -3047,7 +3047,7 @@ class JinnIme : InputMethodService() {
             lastRequestedW = next.widthPercent
             lastRequestedH = next.heightPercent
             // 对边按**起点**位置钉住：内容高会过倍率夹取与逐行取整，用模型值补位置会在
-            // 上下限附近让整块面板平移（真机实测：顶边拖过下限后面板下沉 100px 而尺寸不变）
+            // 上下限附近让整块面板平移（实测：顶边拖过下限后面板下沉 100px 而尺寸不变）
             applyFloatingResize(next, corner, start.x + originWinW, start.y + originWinH)
         }
     }
@@ -3701,7 +3701,7 @@ class JinnIme : InputMethodService() {
         // 晚一步算的后果是：在密码框里选候选会被写进 user_freq.txt。
         // ⚠ 但不能在这里调 `configure()` / `commitComposing()` 清 composing：本回调早于宿主
         // 结束组合态，此时清 IME 侧 composing 而不经宿主，宿主会把残余拼音当纯文本补进旧框
-        // （真机实测：收件人框打「ni」后点正文框，收件人里留下「ni」+ 后续字）。
+        // （实测：收件人框打「ni」后点正文框，收件人里留下「ni」+ 后续字）。
         // composing / 面板 / 密码键盘的复位交给 onStartInputView 的 configure（那时组合态已由
         // 框架正常收尾），路径上只补「不依赖宿主」的 IME 侧标记。
         suppressLearningForSession = InputFieldPrivacy.suppressLearning(
@@ -3837,7 +3837,7 @@ class JinnIme : InputMethodService() {
         // 每次输入框聚焦时重新同步双拼方案（全拼/双拼、中英文）：
         // 设置页改动后无需重启输入法，下次弹键盘即生效。
         // 英文态取键盘当前状态（保留用户手动切换结果，不强制覆盖）
-        // 例外（真机实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
+        // 例外（实测）：建视图那一次已经按同一套方案整树重套过（首弹必然如此，
         // onCreateInputView 紧接着就是本回调），这里就不再重复 —— 一次 configure 实测 8~22ms，
         // 占首弹端到端耗时的 5%~15%，而重复的那次不改变任何像素与状态。
         // 判据两条，缺一不可：
@@ -4185,7 +4185,7 @@ class JinnIme : InputMethodService() {
         ui.removeCallbacksAndMessages(null)
         // 视图引用断开（与下面 screenOffReceiver 同款口径）：视图持 listener 强引用本服务、
         // 服务也持视图，不置 null 就要等整对引用一起被回收才断（2026-09-30）。
-        // ⚠ 但**只清 `pinyinKeyboard` 是不够的**（2026-10-03，L-631）：容器仍强引用拼音视图
+        // ⚠ 但只清 `pinyinKeyboard` 是不够的（2026-10-03，L-631）：容器仍强引用拼音视图
         // （`container.addView(pinyin, …)`），主题包装 Context 又包住本服务 —— 注释宣称的
         // 「视图引用断开」与实际不符。下面把这几个字段一并置空（顺序在 cancelTranslate 之后，
         // 因为它内部要调 `pinyinKeyboard.setTranslating`）。
@@ -4676,7 +4676,7 @@ class JinnIme : InputMethodService() {
     private fun startTranslate(action: AiAction = AiAction.DEFAULT) {
         if (translateInFlight) return
         translateTraceId = Diagnostics.traceId("TR")
-        // ⚠ 闸门阶段也必须用它（2026-10-03，L-769）：L-759 只把生成点提前了，20 个早退出口
+        // ⚠ 闸门阶段也必须用它（2026-10-03，L-769）：L-759 只把生成点提前了，各早退出口
         // 一条都没带上 ⇒ traceId 在闸门阶段是死变量，诊断包仍只能靠时间戳把面板那条日志与后续 W 级
         // 日志拼起来。面板那条已是 i 级（会落盘），所以此处补一条 i 级即可把「他点过」与本次尝试关联。
         Diagnostics.i(TAG, "[$translateTraceId] 翻译: 面板点击进入翻译流程 action=${action.id}")
@@ -4716,7 +4716,7 @@ class JinnIme : InputMethodService() {
         // 只在 onStartInputView 刷新，宿主在键盘已显示时把焦点从普通框切到密码框可能不重发该回调。
         //
         // 判据是 [InputFieldPrivacy.blocksTranslation]（密码类变体 + 宿主声明「不要个性化学习」），
-        // 不能复用 `suppressLearning`（2026-10-01 真机实测修复）：后者服务本地词频学习，
+        // 不能复用 `suppressLearning`（2026-10-01 实测修复）：后者服务本地词频学习，
         // 把 `TYPE_NULL` / `NO_SUGGESTIONS` 也算敏感 —— 这两个标志在浏览器里是常规做法
         // （Chrome 内核的搜索框全带，WebView 输入框常报 TYPE_NULL），拿它们拦翻译会让整类宿主
         // 点了没反应。翻译是用户主动点击发起的，本身就是「同意把这段发出去」。
@@ -4847,7 +4847,7 @@ class JinnIme : InputMethodService() {
         }
         // 读取时刻的**原始**文本（快照）与截取结果分开保存：截取会 trim + 按字节截断，
         // 拿它当快照判据会让「原文本身带首尾空白 / 超限被截」这类原样未变的情形
-        // 被误判成「输入已变化」（2026-09-30 修过同类缺陷：用截取结果当判据）。
+        // 被误判成「输入已变化」（2026-09-30 修过同类缺陷，用截取结果当判据）。
         // 读失败（null）与「光标前确实没有内容」（空串）必须分开：把前者说成后者会把
         // 「宿主读不到」报成「你没写字」（2026-10-01，L-240）
         // ⚠ `before` 是尾部对齐的：`readTextBeforeCursor` 主路径 `getTextBeforeCursor(limit, 0)`
@@ -5151,7 +5151,7 @@ class JinnIme : InputMethodService() {
                         finishTranslate()
                     }
                 }
-                // `ui.post` 只在**主 Looper 已退出**（进程正在收尾）时才返回 false（BUG.md L-1311）：
+                // `ui.post` 只在主 Looper 已退出（进程正在收尾）时才返回 false（BUG.md L-1311）：
                 // 视图 detach 不会让主队列停止派发，原先那句「消息进了不会再 drain 的队列」是错的
                 // 模型 —— 后人照它省掉真正的兜底就会留洞。而看门狗用的是同一条队列的 postDelayed，
                 // 两者同生共死：真到那一步，本进程里已没有任何代码还能跑，也就不存在「就地收尾」可做。
@@ -5562,7 +5562,7 @@ class JinnIme : InputMethodService() {
      */
     private fun charBeforeCursor(connection: android.view.inputmethod.InputConnection): Char? {
         val s = runCatching { connection.getTextBeforeCursor(1, 0) }.getOrNull()
-        // 三态，占位符必须**既不是 null 也不是 '\n'**（2026-10-02，L-481，同日纠正）：
+        // 三态，占位符必须既不是 null 也不是 '\n'（2026-10-02，L-481，同日纠正）：
         //  - 空串（真文首）⇒ null ⇒ 不补前导换行；
         //  - 读不到（抛异常 / 宿主返回 null）⇒ 替换字符占位 ⇒ 让 `appendText` 走「补前导换行」。
         // ⚠ 上一版把读不到映射成 '\n'，而 `appendText` 里 `prev == null || prev == '\n'` 是**同一个
@@ -6036,10 +6036,10 @@ class JinnIme : InputMethodService() {
         const val TEXT_TRANSLATE_EMPTY = "光标前没有可处理的文字"
         const val TEXT_TRANSLATE_PRIVATE_FIELD = "密码框不处理（避免口令外发）"
 
-        /** 选区超单条上限时的复制提示（2026-10-02，L-406：与粘贴链路同一道闸） */
+        /** 选区超单条上限时的复制提示（2026-10-02，L-406，与粘贴链路同一道闸） */
         const val TEXT_COPY_TOO_LONG = "内容过大，未复制"
 
-        /** 写系统剪贴板失败（2026-10-02，L-439：此前只记日志，用户按了没反应） */
+        /** 写系统剪贴板失败（2026-10-02，L-439，此前只记日志，用户按了没反应） */
         const val TEXT_COPY_FAILED = "复制失败，请重试"
 
         /**
@@ -6439,7 +6439,7 @@ class JinnIme : InputMethodService() {
         /**
          * 在线后端的单次听写上限：各家单次音频上限不同，取最保守的 58s，留 2 秒给末帧 / 上传与最终结果。
          *
-         * **TOGGLE 与 HOLD 都要用**：26 键长按同样可能按住超过 58 秒，到点被服务端截断的表现
+         * TOGGLE 与 HOLD 都要用：26 键长按同样可能按住超过 58 秒，到点被服务端截断的表现
          * 是「后半段说的话一个字都没有」——26 键下没有状态条，用户只会以为识别不准。
          * 常量名沿用讯飞时期的 `XF_MAX_TASK_MS`（改名会动到既有守卫，收益为零）。
          */

@@ -130,7 +130,6 @@ object PinyinEngine {
      */
     private const val MIX_ORDER_ASSET = "pinyin_mix.txt.xz"
 
-    /** 扩展词库文件名（用户下载/导入后放在 filesDir 下，可选） */
     /** 可选词库目录名（filesDir 下）：每类词库一个 xz 文件，供「分类词库」页按需下载 */
     const val OPT_DICT_DIR = "dicts"
 
@@ -164,7 +163,7 @@ object PinyinEngine {
      * 分片读完整条解压流，每攒够 1MB 主动睡 1ms 让出 CPU。
      *
      * 不这么做的话，基础索引解压是一次 1.8 秒不给喘息的连续 CPU 冲击（还带一个十几 MB 的大分配）：
-     * 真机实测 App 更新后首次启动、键盘刚弹出来就打字时，帧 p99 从 14ms 飙到 300ms（janky 12%）。
+     * 实测 App 更新后首次启动、键盘刚弹出来就打字时，帧 p99 从 14ms 飙到 300ms（janky 12%）。
      * 让出 CPU 后总耗时只多几十毫秒（都在后台），但前台打字不再被挤。
      *
      * 这只是**兜底路径**（[loadIndexOfHeap]：流式写缓存与映射都失败时）；正常路径见
@@ -1281,12 +1280,12 @@ object PinyinEngine {
             if (optionalLoaded && !pending) return false
             optionalLoading = true
         }
-        // 线程要活 21~34s（真机实测），期间服务可能被系统销毁重建 ⇒ 线程只该持有**应用** Context，
+        // 线程要活 21~34s（实测），期间服务可能被系统销毁重建 ⇒ 线程只该持有**应用** Context，
         // 不该把 IME Service 的 Context 一直挂在后台线程上（BUG.md L-22）。
         val appContext = context.applicationContext
         val thread = Thread {
             try {
-                // 后台优先级：可选包是 1.1M 词条级的重活（真机实测 21~34s），
+                // 后台优先级：可选包是 1.1M 词条级的重活（实测 21~34s），
                 // 且通常发生在用户已经开始打字之后，必须让路给前台输入。
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
                 // 失败集合要在 lambda 外可见：onReady 的判据要用它（见下）
@@ -1670,15 +1669,6 @@ object PinyinEngine {
     internal fun isDictionaryUsable(syllables: Int, chars: Int): Boolean = syllables > 0 && chars > 0
 
     /**
-     * 原子写索引缓存：先写同目录临时文件再 `rename`。
-     *
-     * 不能直接覆盖：缓存可能正被本进程 内存映射 使用（可选包重建缓存时会走到这里），
-     * 截断已映射的文件会让读取方踩到空洞页，Linux 上直接 SIGBUS。rename 只替换目录项，
-     * 旧映射仍指向旧 inode，安全。
-     *
-     * @return 是否成功落盘（失败只是让本次退回堆内，不影响可用性）
-     */
-    /**
      * 清掉 [dir] 里构建期残留的临时件（BUG.md L-1220）：键区 / 词区各可到 32MB，正常路径由
      * `finally` 删掉，但进程在构建中被杀时删不掉 —— 下次装载同一目录时顺手收掉。
      */
@@ -1692,6 +1682,15 @@ object PinyinEngine {
         if (removed > 0) Diagnostics.i(TAG, "清理索引构建残留临时件: $removed 个")
     }
 
+    /**
+     * 原子写索引缓存：先写同目录临时文件再 `rename`。
+     *
+     * 不能直接覆盖：缓存可能正被本进程 内存映射 使用（可选包重建缓存时会走到这里），
+     * 截断已映射的文件会让读取方踩到空洞页，Linux 上直接 SIGBUS。rename 只替换目录项，
+     * 旧映射仍指向旧 inode，安全。
+     *
+     * @return 是否成功落盘（失败只是让本次退回堆内，不影响可用性）
+     */
     private fun writeIndexCacheAtomically(file: java.io.File, bytes: ByteArray): Boolean = runCatching {
         val tmp = java.io.File(file.parentFile, file.name + TMP_SUFFIX)
         tmp.outputStream().use { out ->
@@ -2724,13 +2723,6 @@ object PinyinEngine {
     }
 
     /**
-     * 将拼音串切分为合法音节序列，最后一个音节可能不完整。
-     *
-     * 先尝试「词库约束分词」：整串是词库键时，在合法切分里取音节数最少的一种
-     * （如 xuni → [xu, ni] 拼「虚拟」；贪心会先吃 xun，把 i 留成残码）。
-     * 无词库命中时退回贪心最长匹配（原逻辑）。
-     */
-    /**
      * 切分结果的单条 memo。
      *
      * 每次按键里 `segment` 会被调**两次**：一次给显示（[markSyllables]）、一次给查询（[query]）。
@@ -2749,6 +2741,13 @@ object PinyinEngine {
     @Volatile
     private var segmentHit: SegmentHit? = null
 
+    /**
+     * 将拼音串切分为合法音节序列，最后一个音节可能不完整。
+     *
+     * 先尝试「词库约束分词」：整串是词库键时，在合法切分里取音节数最少的一种
+     * （如 xuni → [xu, ni] 拼「虚拟」；贪心会先吃 xun，把 i 留成残码）。
+     * 无词库命中时退回贪心最长匹配（原逻辑）。
+     */
     private fun segment(input: String): Pair<List<String>, String> {
         val gen = dataGeneration
         segmentHit?.let { if (it.gen == gen && it.input == input) return it.value }
