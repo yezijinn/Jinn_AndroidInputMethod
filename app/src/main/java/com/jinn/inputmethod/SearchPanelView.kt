@@ -159,7 +159,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
             holder.content.setTextColor(skinColor(context, skin.functionGlyph, R.color.text_primary))
             holder.meta.setTextColor(skinColor(context, skin.functionHint, R.color.text_secondary))
             holder.itemId = item.id
-            // 搜索是全库结果、没有分组上下文，因此**始终显示原文**（分组里才显示提取片段）；
+            // 搜索是全库结果、没有分组上下文，因此始终显示原文（分组里才显示提取片段）；
             // 但原文要按码点截成预览：256KB 无断点单行会让最优断行吃掉 GB 级内存
             // （ClipboardClassifier.PREVIEW_MAX_CODE_POINTS）。窗口从**命中点**起算，
             // 否则命中落在开头 200 码点之外时行内看不到那个词（BUG.md L-1478）
@@ -360,7 +360,7 @@ class SearchPanelView(context: Context) : LinearLayout(context) {
         if (cur.isNotEmpty()) {
             // 按**码点**删（复用 [TextSelection.stepByCodePoint]）：符号层会把 emoji 追加进
             // 搜索框，按 UTF-16 码元删会留下孤立代理项 —— 搜索框渲染成豆腐块，此后每次退格只删一个码元，
-            // 搜索词永远匹配不到任何条目也删不干净（BUG.md 第 15 批 M4）。
+            // 搜索词永远匹配不到任何条目也删不干净（BUG.md L-1123）。
             cur.delete(TextSelection.stepByCodePoint(cur.toString(), cur.length, -1), cur.length)
         }
     }

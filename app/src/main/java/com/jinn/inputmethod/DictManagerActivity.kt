@@ -318,7 +318,7 @@ class DictManagerActivity : Activity() {
             val status = try {
                 val text = input.use { CustomDicts.readUtf8Capped(it, CustomDicts.MAX_INPUT_CHARS) }
                 val syllables = CustomDicts.loadSyllables(app)
-                // 解析 → 判闸 → 落盘（源文本归一后**先**落、包**后**落）走同一个入口，见
+                // 解析 → 判闸 → 落盘（源文本归一后**先落、包后落**）走同一个入口，见
                 // CustomDicts.saveHuman 的两条不变量（BUG.md L-851 / L-856）——此前这里先 writePack
                 // 再判闸，导入超 5 万条的现成词表时会把截断版写进磁盘、界面却报失败
                 val report = CustomDicts.saveHuman(dictDir(), text, syllables)

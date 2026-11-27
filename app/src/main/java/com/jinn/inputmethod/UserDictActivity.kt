@@ -849,7 +849,7 @@ class UserDictActivity : ComponentActivity() {
      * 而 SAF 的流只能顺序读一次；同时这一步顺手挡住了误选的巨型文件。
      */
     private fun previewImport(uri: Uri) {
-        // 与同页其余四处同口径：池在 onDestroy 已关时提交会抛 RejectedExecutionException，
+        // 与同页其他池提交同口径：池在 onDestroy 已关时提交会抛 RejectedExecutionException，
         // 这里由 SAF 回调在主线程触发 ⇒ 不包就是未捕获异常终止进程（BUG.md L-1422）
         runCatching {
             io.execute {
