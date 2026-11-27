@@ -45,7 +45,7 @@ internal object ClipboardFileImporter {
     /** 单次导入的物理行数上限（含空行）。取 [ClipboardPrefs.MAX_ITEMS_CAP]：再多也留不住 */
     internal const val MAX_IMPORT_LINES = 20_000
 
-    /** 导入条目的来源显示名（面板「来源」列用；包名用真实包名，不伪造来源） */
+    /** 导入条目的来源显示名（入库 `source_app_name`；包名用真实包名，不伪造来源） */
     internal const val SOURCE_APP_NAME = "文件导入"
 
     /**
