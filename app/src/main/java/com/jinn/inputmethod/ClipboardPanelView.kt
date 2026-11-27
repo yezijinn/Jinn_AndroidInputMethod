@@ -608,7 +608,7 @@ class ClipboardPanelView(context: Context) : LinearLayout(context) {
         isPasting = false
         hideActionBar()
         hideConfirmBar()
-        // 每次重新打开都清空「已展开」集合，避免上次的状态跨会话残留
+        // 每次重新打开都收起长按操作条与确认条，避免上次的状态跨会话残留
         currentTraceId = Diagnostics.traceId("CLIP")
         Diagnostics.i(TAG, "[$currentTraceId] OPEN onPanelShown thread=${Thread.currentThread().name}")
         // 每次打开都重置分类为「全部」，不残留上次状态
