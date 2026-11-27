@@ -50,7 +50,7 @@ import java.util.concurrent.TimeUnit
  * （每拍只做一次 `WebSocket.send`，不阻塞）；回调（`onState` / `onResult`）在 OkHttp 的 IO 线程触发，
  * 接收方自行切主线程。
  *
- * ⚠ 凭据只从 [Prefs] 读并**只进 Authorization 头**：日志里只有长度与「已配置 / 未配置」，绝不输出原文。
+ * ⚠ 凭据只从 [Prefs] 读并**只进 Authorization 头**：日志只记端点、模型名与 Key 长度，绝不输出原文。
  */
 class AliAsrClient(
     private val prefs: Prefs,
@@ -87,8 +87,8 @@ class AliAsrClient(
     /**
      * 本次连接使用的模型名：在 [connect] 校验时缓存。
      *
-     * 不在各调用点现读 [Prefs.aliModel]：凭据读取可能因锁屏 / Keystore 暂时返回空串，
-     * 那样会在会话中途发出没有 model 的 `run-task`，被服务端当场拒绝。
+     * 不在各调用点现读 [Prefs.aliModel]：模型名是普通配置（非空、回落默认），不像凭据那样
+     * 受锁屏 / Keystore 影响；建连时缓存一次，本条连接的 `run-task` 复用同一个模型名。
      */
     @Volatile
     private var sessionModel: String = ""
