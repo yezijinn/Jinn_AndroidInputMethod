@@ -1776,8 +1776,8 @@ class SettingsActivity : ComponentActivity() {
         /**
          * 「检查更新」看门狗超时：两源串行的总预算（`UpdateChecker.TOTAL_BUDGET_MS` = 25s）+ 5s 余量。
          *
-         * 15s 版本按「单个 10s 超时」留余量，但 Gitee 不可达时还要回退 GitHub 再来一轮，
-         * 看门狗会先于请求熄灯解锁 —— 防重入判据随之失效，用户可并发发起第二次检查并重复弹窗。
+         * 旧值 15s 只按「单个 10s 超时」留余量，但两源串行：Gitee 不可达还要回退 GitHub 再来一轮，
+         * 看门狗会先于请求熄灯解锁 —— 防重入判据随之失效，用户可并发发起第二次检查并重复弹窗，故上调。
          */
         const val UPDATE_WATCHDOG_MS = 30_000L
 

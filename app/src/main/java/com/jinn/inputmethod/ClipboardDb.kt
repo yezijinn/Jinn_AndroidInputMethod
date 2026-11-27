@@ -709,12 +709,11 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
     /**
      * 删除单条；返回是否真正删除。
      * 用可写库：getReadableDatabase 在磁盘满等异常场景会退回只读句柄，删除会静默失败。
-     */
-    /**
+     *
      * 写路径统一监视器（BUG-04）：本类此前只有 [upsert] 与批量恢复写入同步，其余写方法
      * 各自「读一遍再改」（按条数 / 体积裁剪、按明文匹配删、收藏上限淘汰）—— 并发于入库时
      * 会删掉刚插入的行、或在同一份预算上各算一次。所有改动行集的方法与入库共用同一把锁。
-     *（[reclassifyAll] 不长持锁：它的每条 UPDATE 自身原子，且整趟是全库解密级的秒级任务，
+     * （[reclassifyAll] 不长持锁：它的每条 UPDATE 自身原子，且整趟是全库解密级的秒级任务，
      * 持锁会把用户此刻的复制保存一起拖住。）
      */
     @Synchronized
