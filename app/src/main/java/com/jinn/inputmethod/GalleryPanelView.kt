@@ -166,10 +166,10 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      * 缩略图解码池（[thumbThreadCount] 条）：并发解一页（[PAGE_SIZE] 张），不借剪贴板那条 [BackgroundIo]。
      *
      * [BackgroundIo] 是单线程串行且全应用共用，图片解码插队会拖慢剪贴板保存；
-     * 代价是 3 条常驻线程与略高的内存峰值。
+     * 代价是 1 或 3 条常驻线程（低内存档 1 条）与略高的内存峰值。
      *
      * ⚠ 必须可重建：[stopBackgroundWork] 与 [onDetachedFromWindow] 都会 `shutdownNow()` 关池
-     * （视图重建时旧池的 core 线程不超时回收，不关就是每次重建永久漏几条线程 —— L-1035）。
+     * （视图重建时旧池的 core 线程不超时回收，不关就是每次重建永久漏 1 或 3 条线程 —— L-1035）。
      * 面板实例缓存复用（键盘侧 `ensureGalleryPanel` 只建一次）：detach 后实例仍在，
      * 关池后再提交会被拒、界面是一屏空白格子。故关池后置 null，由 [poolOrNew] 按需重建。
      */
@@ -359,7 +359,7 @@ internal class GalleryPanelView(context: Context) : LinearLayout(context) {
      *
      * 两件事都要做：`generation++` 作废在途任务的结果，`shutdownNow()` 结束 [thumbPool] ——
      * 视图重建（换肤 / 符号布局变更 / 配置变化）会连面板一起换掉，而旧池的 core 线程不超时回收，
-     * 不关就是每次重建永久漏三条（L-1035；X-333 的反证只覆盖到进程生命周期这一层）。
+     * 不关就是每次重建永久漏 1 或 3 条线程（L-1035；X-333 的反证只覆盖到进程生命周期这一层）。
      */
     fun stopBackgroundWork() {
         generation++

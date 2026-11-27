@@ -628,7 +628,7 @@ private const val LOG_SEGMENTS_KEPT = 2
      * `Caused by:` / `Suppressed:` 段虽以 `\t` 开头，携带的却是异常 message、用户可控：
      * 保留换行就能在日志文件里插入一条含时间戳与级别的假日志行（且随诊断包外传）。
      * 因此除帧行外一律接在上一行尾部（换行 → `⏎`，`\r` / `\0` → 空格），
-     * 首行之后不再有任何物理换行 —— 与 [sanitizeForFile] 同一判据（L-1385）。
+     * 帧行之外不再有任何物理换行 —— 与 [sanitizeForFile] 同一判据（L-1385）。
      * 整体不截断：截断会砍掉关键帧。
      */
     internal fun flattenNonFrameLines(stack: String): String {
