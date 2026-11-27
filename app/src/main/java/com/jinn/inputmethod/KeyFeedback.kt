@@ -142,7 +142,7 @@ internal object KeyFeedback {
         systemHapticAllowed = systemFlag(context, Settings.System.HAPTIC_FEEDBACK_ENABLED)
         // 音频服务按需取：设置页会在本进程还没挂载 IME 时调用本方法，那时 audioManager 还是 null。
         // ⚠ 不能写成 `audioManager?.ringerMode == RINGER_MODE_NORMAL` —— 左侧为 null 时整个表达式
-        // 求值为 false，被静默当成「手机静音」，闸门永远关着（真机实测：三项系统设置全开而试听恒置灰）。
+        // 求值为 false，被静默当成「手机静音」，闸门永远关着（三项系统设置全开而试听恒置灰）。
         // 取不到音频服务时按「放行」处理，与另外两道闸门的兜底口径一致。
         val am = audioManager
             ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)
