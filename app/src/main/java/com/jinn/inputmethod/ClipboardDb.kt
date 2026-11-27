@@ -1708,7 +1708,7 @@ class ClipboardDb private constructor(context: Context) : SQLiteOpenHelper(
          * 已装机库的索引同名已存在，改 `onCreate` 只影响全新安装 ⇒ 必须配一条迁移分支。
          */
         /**
-         * v7：给「密文总长」加**表达式索引** `LENGTH(encrypted_content)`（性能优化清单 MEM-06）。
+         * v7：给「密文总长」加**表达式索引** `LENGTH(encrypted_content)`（性能优化清单 MEM-38）。
          *
          * `trimByByteBudget` 每次入库都要 `SELECT SUM(LENGTH(encrypted_content))`（hot path），
          * 而该列是整条密文（base64），全表扫要读全部内容页。表达式索引只存长度（约十几字节一行）：
