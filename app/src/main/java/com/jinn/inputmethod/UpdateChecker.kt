@@ -21,7 +21,7 @@ import java.net.URL
  * 「网络异常」（统一规范 6.9 定规）；Gitee 可直连，公开仓库的 tags API 匿名可访问。
  * Gitee 的网页 /tags 会返回 405，所以它改走开放 API，
  * 返回的 JSON 里同样带 tag 名，标签解析规则与 GitHub 完全一致
- * （去 v 前缀、只保留 6 或 8 位 **ASCII** 数字、取最大；7 位与非 ASCII 数字见 BUG.md L-83 / L-126）。
+ * （去 v 前缀、只保留 6 或 8 位 ASCII 数字、取最大；7 位与非 ASCII 数字见 BUG.md L-83 / L-126）。
  */
 object UpdateChecker {
 
@@ -96,7 +96,7 @@ object UpdateChecker {
     internal const val AUTO_CHECK_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
 
     /**
-     * 自动检查的网络与电量门控（MEM-17）：只在「不计费网络」或「正在充电」时跑。
+     * 自动检查的网络与电量门控：只在「不计费网络」或「正在充电」时跑。
      *
      * 自动检查是后台行为，用户没在等它；手机用流量、靠电池时不该为一次版本检查付流量与唤醒。
      * CONNECTIVITY_SERVICE 取不到、或判定过程抛异常时**放行**（宁可多跑一次，也不要让功能静默失效）；
@@ -179,7 +179,7 @@ object UpdateChecker {
         // **翻页必须同时带 `per_page`**（2026-10-07，L-1052）：只传 `page` 时服务端
         // 忽略它 —— 六次逐页请求的响应字节数完全相同（6022），于是并集是同一页的 N 份复制
         // （真机日志因此虚报「160 个」，实际仓库只有 28 个标签），`GITEE_TAGS_MAX_PAGES` 这道
-        // 上限守卫空转；而 `fetchLatest` 先返回非空结果 ⇒ 这份可能被截断的答案会**压制** GitHub
+        // 上限守卫空转；而 `fetchLatest` 先返回非空结果 ⇒ 这份可能被截断的答案会压制 GitHub
         // 回退源，一旦接口给「不传 per_page」的整份返回施加更大上限，表现就是永久「已最新」
         // 且不自愈（L-146 的永久版，而这套翻页对它是无效防线）。加上 `per_page` 后 `page` 才生效：
         // 实测 `per_page=5&page=2` 返回第二页（`20260925`…`20260930`，与首页不重叠）。
@@ -224,7 +224,7 @@ object UpdateChecker {
      * 比较用的**归一键**（BUG.md L-123）：6 位 `yyMMdd` 补成 8 位（`+20000000`），8 位原样。
      *
      * 归一后的整数**只用于比较**；进 URL / 文案的是调用方保留的原始标签名（[releasesUrl] 要原始串），
-     * 所以**只在这里**归一：
+     * 所以只在这里归一：
      * 否则混用两种长度时按数值比会恒错（`260929` 恒小于 `20260929`）⇒ 跨源挑旧、与本地比判「已最新」。
      */
     internal fun comparableVersion(value: Int): Int =
@@ -240,16 +240,16 @@ object UpdateChecker {
         // 大小写 `v` 前缀都认（BUG.md L-147）：现行规范是纯数字日期（与 versionCode 同形态），
         // `v` 前缀只属历史与并存写法；只去小写的实现会**静默忽略** `V20260919`
         // （等价于该 tag 不存在 ⇒ 退化为取次大值 ⇒ 可能误报
-        // 「已是最新」且不自愈）。只削**一个**前缀字符：`vV20260929` 仍然是拒收（长度 9）。
+        // 「已是最新」且不自愈）。只削一个前缀字符：`vV20260929` 仍然是拒收（长度 9）。
         val digits = if (raw.startsWith("v") || raw.startsWith("V")) raw.substring(1) else raw
         // 只认 6 位（yyMMdd）与 8 位（yyyyMMdd，= versionCode 格式）：7 位两者都不是（BUG.md L-83）。
         // 现状（tag 全 8 位）里 7 位数值上**恒小于**任何 8 位、不会误报；但标签规范一旦回退到 6 位
-        // （`yyMMdd`，即 L-123 记的混用场景），7 位就会**恒大于**全部合法值 ⇒「永远提示有新版本、
+        // （`yyMMdd`，即 L-123 记的混用场景），7 位就会恒大于全部合法值 ⇒「永远提示有新版本、
         // 点进去打不开」且不自愈（与 L-04 同型）⇒ 按「别猜」口径拒收，别留下要看前提才成立的判据。
         if (digits.length != 6 && digits.length != 8) return null
         // **ASCII** 数字：`Char::isDigit` 认 Unicode 全角 / 阿拉伯-印度数字，`toIntOrNull`
         // （经 `Character.digit`）同样认 —— 实测 `"２０２６０９２９"` → 20260929、`"2026092０"` → 20260920
-        // ⇒ 用中文输入法打出的全角 tag 会被当成版本号，而 `releasesUrl` 按约定把**原始串**拼进直达
+        // ⇒ 用中文输入法打出的全角 tag 会被当成版本号，而 `releasesUrl` 按约定把原始串拼进直达
         // 链接（不编码）⇒ 点进去 404（BUG.md L-126）。
         if (!digits.all { it in '0'..'9' }) return null
         val value = digits.toIntOrNull() ?: return null

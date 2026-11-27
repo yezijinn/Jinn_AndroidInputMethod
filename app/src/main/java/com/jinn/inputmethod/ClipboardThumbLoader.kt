@@ -75,7 +75,7 @@ internal object ClipboardThumbLoader {
      * ⚠ 刻意**不含** `UI_HIDDEN`(20) / `BACKGROUND`(40) / `MODERATE`(60)，理由不是「它们常来」：
      * ① `BACKGROUND` / `MODERATE` / `COMPLETE` 只发给 `curProcState >= PROCESS_STATE_HOME`(14) 的
      *    缓存 / LRU 档进程（另有 heavy-weight），而 IME 服务活着时最差也只是 perceptible ——
-     *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档**结构性不可达**
+     *    实测键盘弹出 `adj=0 / state=2`、收起 `adj=200 / state=7`，都 < 14 ⇒ 前两档结构性不可达
      *    （`COMPLETE` 留下只为纵深防御：真到那一档时本进程已不在）；
      * ② `UI_HIDDEN` 是本应用自己的页面（设置 / 历史页）离屏，与内存压力无关；按它清等于
      *    每次离开设置页就把键盘面板要用的图清一遍，收益为零。
