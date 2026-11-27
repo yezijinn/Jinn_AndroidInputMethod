@@ -74,7 +74,7 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
     /** 当前是否只看收藏的图片（取自 [show] 的入参 [favoritesOnly]） */
     val isFavoritesOnly: Boolean get() = favoritesOnly
 
-    /** 当前是否有图（取自 [items] 是否为空） */
+    /** 当前是否无图（取自 [items] 是否为空） */
     val isEmpty: Boolean get() = items.isEmpty()
 
     /**

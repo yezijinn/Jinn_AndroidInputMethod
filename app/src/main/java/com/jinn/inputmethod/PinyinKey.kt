@@ -214,7 +214,7 @@ import kotlin.math.min
             }
 
         /**
-         * 双拼红色提示（键下方，追加在 [subLabel] 之后）。用于 u/i/v 键的 sh/ch/zh。
+         * 双拼红色提示（键下方，追加在 [subLabel] 之后）。默认自然码下用于 u/i/v 键的 sh/ch/zh。
          * 多行用 `\n` 分隔。
          */
         var subLabelRed: String = ""
@@ -586,7 +586,7 @@ import kotlin.math.min
 
         private companion object {
 
-            /** 表示大写字母字号占按键高度的比例 （0.5f 即字母高度为键高的 50%）。值越大字母越大 */
+            /** 表示大写字母字号占按键高度的比例（0.5f 即字母高度为键高的 50%）。值越大字母越大 */
             const val TEXT_RATIO = 0.5f
 
     /**
