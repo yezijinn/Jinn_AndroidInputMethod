@@ -848,7 +848,7 @@ object ClipboardStore {
         return text.length.toLong()
     }
 
-    /** 单次粘贴允许的「最长不可断片段」（UTF-8 字节）。L-1474：32KB 为保守余量，非实测起爆点下沿。 */
+    /** 单次粘贴允许的「最长不可断片段」（UTF-8 字节）。L-1474：32KB 是起爆点下沿，非保守余量。 */
     const val PASTE_MAX_UNBREAKABLE_RUN_BYTES = 32 * 1024
 
     /**
