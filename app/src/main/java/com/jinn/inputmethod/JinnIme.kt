@@ -3470,7 +3470,7 @@ class JinnIme : InputMethodService() {
         // 剪贴板面板同理（2026-10-02）：上面那条理由对它**逐字成立** —— 它也挂在被 GONE 的
         // 拼音视图上、`clipboardActive` 仍为 true。语音期间它既不可见、又把 `hasActiveOverlay`
         // 一直顶成真（定时换肤被无限延后），切回拼音后还会带着上一条历史原样弹出。
-        // 与 `onFinishInputView` 的两行处置对齐（那两个面板一起收）。
+        // 与 `onFinishInputView` 的三行处置对齐（那三个面板一起收）。
         pinyinKeyboard?.hideClipboardPanel()
         pinyinKeyboard?.hideGalleryPanel()
         // 语音树可能还没建（MEM-06：默认拼音模式的用户从没触发过它）——此刻才真正需要：
@@ -3586,7 +3586,7 @@ class JinnIme : InputMethodService() {
      */
     private fun recreateKeyboardView() {
         pendingSymbolLayoutRebuild = false
-        // 旧视图连同它的两个面板一起被换掉：面板的后台扫描靠各自的刷新令牌判停，而重建不走
+        // 旧视图连同它的三个面板一起被换掉：面板的后台扫描靠各自的刷新令牌判停，而重建不走
         // 面板的「打开 / 收起」入口（令牌不会自己失效）⇒ 先明确收工，否则旧面板会把任务跑完、
         // 把结果 post 到已脱离视图树的列表上，还占着单线程的 BackgroundIo（BUG.md L-17）。
         pinyinKeyboard?.stopPanelBackgroundWork()

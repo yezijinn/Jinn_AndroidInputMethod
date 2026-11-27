@@ -1969,9 +1969,8 @@ object PinyinEngine {
     private fun loadPhrasesReader(reader: java.io.BufferedReader, merge: Boolean = false) {
         // 任何词库变更都必须让「合并结果缓存」失效，否则同一个进程内换词库后会读到旧候选
         invalidateMergedCache()
-        // 容量已在声明处预分配（ConcurrentHashMap(64_000)，见 phrasesByPinyin 声明 —— 那句 600_000
-        // 是旧版两段式加载时代的残留，与本表无关），此处不再重建容器：重建会让并发读取方拿到另一个实例，
-        // 正在遍历的旧表被丢弃。
+        // 容量已在声明处预分配（ConcurrentHashMap(64_000)，见 phrasesByPinyin 声明），
+        // 此处不再重建容器：重建会让并发读取方拿到另一个实例，正在遍历的旧表被丢弃。
         var line = reader.readLine()
         while (line != null) {
             if (line.isNotBlank()) {
