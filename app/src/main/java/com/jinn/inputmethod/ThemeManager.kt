@@ -14,7 +14,7 @@ import java.util.Calendar
  * [Prefs] 只持有 `applicationContext` 的 `SharedPreferences`（见 `Prefs` 类头），跨 Activity 复用安全，
  * 且同一个 `SharedPreferences` 实例本来就会被框架按名缓存 —— 每次 `Prefs(context)` 新建的只是
  * 一层薄包装，代价在「每次调用都走一遍 getSharedPreferences 查找」。本文件有两处默认参数与
- * 一处 ticker 反复构造它（键盘每次换肤、每个页面每次接入 ticker），收口到一处。
+ * 一处 ticker 反复构造它（每 tick 判一次档、每个页面每次接入 ticker），收口到一处。
  *
  * 用成对读写的 volatile 引用发布：构造是幂等的，竞态下最坏只是多构造一个再被覆盖，不会读到半个对象。
  */

@@ -53,7 +53,7 @@ internal object CustomDicts {
     const val SOURCE_NAME = "custom_user.src.txt"
 
     /**
-     * 单次导入 / 保存的**文本**上限：8M **字符**，不是字节（BUG.md L-853）。
+     * 单次导入 / 保存的文本上限：8M **字符**，不是字节（BUG.md L-853）。
      *
      * 口径是字符数 —— `readCapped` 按 `CharArray` 计数、`String.length` 同款，两处必须一致
      * （写进去的要能读回来）。中文在 UTF-8 里一行三字节，8M 字符最多约 24MB：旧名
@@ -241,7 +241,7 @@ internal object CustomDicts {
      *
      * 规则：能解析出词条的行统一成「词 空格 拼音」（拼音小写、`ü`→`v`、剥声调数字、音节单空格），
      * 于是「几个空格 / 全角空格 / NBSP / TAB / 混合写法」在保存后都收敛成同一形态；注释、空行、
-     * 解析不出词条的行、以及带**第三列**的行都**原样保留** —— 写过的内容一行都不丢，下次打开还能看见并修正。
+     * 解析不出词条的行、以及带第三列的行都**原样保留** —— 写过的内容一行都不丢，下次打开还能看见并修正。
      *
      * 幂等：对已标准化的文本再跑一次结果不变（拆分与归一复用 [splitHumanLine] / [normalizeSyllables]，
      * 与 [parseHuman] 不会各写一套规则）。
