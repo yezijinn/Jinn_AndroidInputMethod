@@ -133,7 +133,7 @@ internal object StorageUsage {
         item("下载词库包", "在「分类词库」页下载或删除（短语词组的数据源）", packEntries)
         item("自定义词库", "在「快捷补充」页添加的词（打包副本与原文）", customEntries)
 
-        // 词库索引缓存（dicts 之外的第二大项，也是用户最看不见的一项）
+        // 词库索引缓存（用户最看不见的一项）
         item(
             "词库索引缓存", "词库包首次使用时生成,短语必须的索引",
             scan(File(files, PinyinEngine.INDEX_CACHE_DIR), claimed),

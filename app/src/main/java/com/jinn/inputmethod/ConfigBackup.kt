@@ -222,7 +222,10 @@ internal object ConfigBackup {
         return sb.toString()
     }
 
-    /** 解析 manifest；不是本程序的包或字段缺失/非法一律返回 null（调用方按「无法识别」提示） */
+    /**
+     * 解析 manifest；仅「不是本程序的包 / formatVersion 非法 / JSON 非法」返回 null
+     * （调用方按「无法识别」提示）。其余字段缺失走默认。
+     */
     fun parseManifest(text: String): Manifest? = runCatching {
         val o = JSONObject(text)
         if (o.optString("format") != FORMAT) return null
