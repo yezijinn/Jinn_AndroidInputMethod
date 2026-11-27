@@ -28,7 +28,7 @@ import java.util.zip.ZipOutputStream
  */
 internal object ConfigBackupManager {
 
-    /** 与类名一致（全项目惯例；`ConfigBackup` 对象本身不写日志，故不会撞标签） */
+    /** 与类名一致（全项目惯例；`ConfigBackup` 日志标签为 ConfigBackup，与本标签不同） */
     private const val TAG = "ConfigBackupManager"
 
     /** 与 [Diagnostics] 共用缓存目录（条目前缀不同，互不干扰清理） */
