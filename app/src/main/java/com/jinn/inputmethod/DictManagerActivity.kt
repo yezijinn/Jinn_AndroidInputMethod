@@ -1223,7 +1223,7 @@ private fun fetchToFile(client: okhttp3.OkHttpClient, dir: File, url: String, fi
         if (!tmp.renameTo(dst)) error("写入失败")
         return dst.length()
     } catch (t: Throwable) {
-        // 半截文件清掉：否则一次失败就在用户存储里留 6MB 垃圾
+        // 半截文件清掉：否则一次失败就在用户存储里留下垃圾（上限 [MAX_DOWNLOAD_BYTES]）
         runCatching { if (tmp.exists()) tmp.delete() }
             .onFailure { Diagnostics.w(TAG, "清理临时文件失败: ${it.message}") }
         throw t
