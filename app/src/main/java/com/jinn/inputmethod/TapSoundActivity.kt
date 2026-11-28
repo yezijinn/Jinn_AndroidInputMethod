@@ -347,6 +347,8 @@ class TapSoundActivity : Activity() {
             isEnabled = index != TapSound.NONE && previewAllowed
             alpha = if (isEnabled) 1f else 0.4f
             setOnClickListener { playPreview(index) }
+            // 试听只响选中的那一下：关掉 Button 自带的平台点击音（L-1521）
+            isSoundEffectsEnabled = false
         }
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -416,6 +418,8 @@ class TapSoundActivity : Activity() {
             .create()
         pickerDialog = dialog
         dialog.show()
+        // 弹窗点击音由 ListView 自身播放：只关本弹窗的，不碰进程级策略（L-1521）
+        dialog.listView.isSoundEffectsEnabled = false
     }
 
     // ── 试听 ──

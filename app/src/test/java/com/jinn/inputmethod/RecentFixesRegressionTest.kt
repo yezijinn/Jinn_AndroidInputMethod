@@ -8480,6 +8480,14 @@ class RecentFixesRegressionTest {
         assertTrue("选中的序号必须走 TapSound.pickerChoice", "TapSound.pickerChoice(which)" in src)
         assertFalse("不许再自己把映射值翻成列表序号", "if (current == TapSound.NONE)" in src)
         assertFalse("不许再自己把列表序号翻成映射值", "if (which == TapSound.SOUND_COUNT)" in src)
+        // L-1521：试听按钮与选音弹窗列表项只响选中那一下，用局部 isSoundEffectsEnabled 关掉
+        // 平台点击音；不许回退成进程级策略（进程级是 KeyFeedback.suppressSoundNow 的领地）。
+        val preview = TestSources.window(
+            src, "setOnClickListener { playPreview(index) }", "return LinearLayout",
+        )
+        assertTrue("试听按钮必须局部关掉平台点击音", "isSoundEffectsEnabled = false" in preview)
+        val picker = blockAfter(src, "private fun showSoundPicker")
+        assertTrue("选音弹窗列表项必须局部关掉平台点击音", "dialog.listView.isSoundEffectsEnabled = false" in picker)
     }
 
     /**

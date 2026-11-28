@@ -160,8 +160,11 @@ internal object UserFrequency {
                 return
             }
             val parsed = parse(text, now, PinyinEngine::toSimplified)
-            entries.clear()
-            for ((word, v) in parsed) entries[word] = Entry(v.first, v.second)
+            // 与 remember/flush/applyReload 同一写锁：载入整份替换不能与运行期学习并发改表（L-1416）
+            synchronized(saveLock) {
+                entries.clear()
+                for ((word, v) in parsed) entries[word] = Entry(v.first, v.second)
+            }
             Diagnostics.i(TAG, "用户词频: 已载入 ${parsed.size} 条（含按天衰减）")
         }.onFailure {
             // 读取过程抛出（IO 错误 / 解析异常）同样意味着「盘上内容未知」

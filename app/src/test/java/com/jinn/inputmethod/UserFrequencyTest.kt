@@ -491,6 +491,17 @@ class UserFrequencyTest {
             UserFrequency.setKeyForTest(key)
             dir.deleteRecursively()
         }
+
+        // 形态钉：载入整份替换必须在写锁内，不能与运行期学习并发改表（L-1416）
+        val win = TestSources.window(
+            TestSources.codeSource("UserFrequency.kt"),
+            "val parsed = parse(text, now, PinyinEngine::toSimplified)",
+            "}.onFailure",
+        )
+        val lock = win.indexOf("synchronized(saveLock)")
+        val clear = win.indexOf("entries.clear()")
+        assertTrue("loadFromFile 必须用 saveLock 保护整份替换", lock >= 0)
+        assertTrue("entries.clear() 必须在锁内", lock in 0 until clear)
     }
 
     // ── 防抖尾沿判定（纯函数）──────────────────────────────────────────────
