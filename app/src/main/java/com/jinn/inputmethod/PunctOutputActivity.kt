@@ -126,8 +126,6 @@ class PunctOutputActivity : Activity() {
     }
 
     private companion object {
-        const val TAG = "PunctOutput"
-
         /** 页面标题与说明（文案在代码里下发，不走 strings.xml） */
         const val TEXT_TITLE = "空格左右两边的按钮输出自定义"
         const val TEXT_HINT = "仅限一个字符"

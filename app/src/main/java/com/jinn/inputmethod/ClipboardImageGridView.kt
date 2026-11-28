@@ -71,12 +71,6 @@ internal class ClipboardImageGridView(context: Context) : LinearLayout(context) 
      */
     private var favoritesOnly = false
 
-    /** 当前是否只看收藏的图片（取自 [show] 的入参 [favoritesOnly]） */
-    val isFavoritesOnly: Boolean get() = favoritesOnly
-
-    /** 当前是否无图（取自 [items] 是否为空） */
-    val isEmpty: Boolean get() = items.isEmpty()
-
     /**
      * 数据变化回调（空的 / 条数）：**条带模式**（收藏分组上方的网格）据此在无图时收起自己 ——
      * 条带里的空态文案是给全屏网格写的（「复制的图片会自动保存在这里」），留在分组上方会白占两行。

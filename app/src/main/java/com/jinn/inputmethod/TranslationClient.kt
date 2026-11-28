@@ -321,6 +321,11 @@ internal object TranslationClient {
                 }
                 response.use {
                     val body = readBodyCapped(it)
+                    // 读体失败与「服务端真回了空体」要分得开：前者原先只在日志里留
+                    // `HTTP 200 chars=0`，读起来像服务端问题
+                    if (body == null && !call.isCanceled()) {
+                        Diagnostics.w(TAG, traceTag(traceId) + "翻译响应: 无响应体或读体失败（按空体继续）")
+                    }
                     // 记协议：排障时「走的哪个协议」是第一个要分清的事（曾疑 503 与 h2 有关，实测排除）
                     // len 恰好顶到上限时**可能是被截断的**（读取上限的语义）：标出来，免得把
                     // 「半截 JSON 解析失败」当成服务端问题（2026-10-01，L-243）
@@ -552,6 +557,9 @@ internal object TranslationClient {
                 }
                 response.use {
                     val body = readBodyCapped(it)
+                    if (body == null && !call.isCanceled()) {
+                        Diagnostics.w(TAG, "获取模型: 无响应体或读体失败（按空体继续）")
+                    }
                     if (it.code in 200..299) {
                         val models = OpenAiTranslator.parseModels(body)
                         // 与 `translate` 同口径记长度与截断标记（2026-10-02，L-457）：
