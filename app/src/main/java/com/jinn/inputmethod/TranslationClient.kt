@@ -235,8 +235,9 @@ internal object TranslationClient {
             // 凭据含 Header 非法字符（`IllegalArgumentException`）单独归因（2026-10-02，L-429）：
             // 归 PARAM 会把用户引向「语言方向 / 模型名 / 路径」——那是他刚检查过的东西；
             // 真因在 Key 里混了不可见字符（与 fetchModels 的 -3 / TEXT_KEY_INVALID 同源）。
-            // ⚠ 归因偏保守：`url()` 对非法地址同样抛 `IllegalArgumentException` ⇒ 地址写错时也会
-// 得到「凭据含不可见字符」，与真因不符（待区分）。
+            // 六家的地址在构造期就是 `HttpUrl`：OpenAI 兼容地址无效时 `joinUrl` 返 null、
+            // `error(...)` 抛 `IllegalStateException` ⇒ 落到下面的 else 归 PARAM。故这里的
+            // `IllegalArgumentException` 只来自 `.header()`，不存在「地址写错被误报成凭据」。
             val error = if (it is IllegalArgumentException) {
                 TranslationError.CREDENTIAL
             } else {

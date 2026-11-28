@@ -283,7 +283,7 @@ internal val SYMBOL_GROUPS: List<SymbolGroup> = listOf(
             'a' to "⑹", 's' to "⑺", 'd' to "⑻", 'f' to "⑼", 'g' to "⑽",
             'h' to "⑾", 'j' to "⑿", 'k' to "⒀", 'l' to "⒁",
             'z' to "⒂", 'x' to "⒃", 'c' to "⒄", 'v' to "⒅", 'b' to "⒆",
-            'n' to "⒇", 'm' to "0.",
+            'n' to "⒇", 'm' to "㉑",
         ),
         // 第 6 页：带括号小写字母（⒜~⒵）
         mapOf(

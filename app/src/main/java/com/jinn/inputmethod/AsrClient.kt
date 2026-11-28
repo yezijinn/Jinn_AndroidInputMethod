@@ -132,8 +132,9 @@ class AsrClient(
             .addHeader("Sec-WebSocket-Protocol", "binary")
             .build()
         socket = http.newWebSocket(request, listener)
-        Diagnostics.i(TAG, "connect: $target (force=$force)")
-        Log.i(TAG, "connect: $target")
+        val shown = loggableUrl(target)
+        Diagnostics.i(TAG, "connect: $shown (force=$force)")
+        Log.i(TAG, "connect: $shown")
     }
 
     /**
@@ -525,4 +526,23 @@ internal object AsrReconnect {
 
     /** @param code 握手阶段的 HTTP 状态码；null = 没拿到响应 */
     fun shouldRetry(code: Int?): Boolean = code == null || code == 408 || code == 429 || code >= 500
+}
+
+/**
+ * 日志里可用的连接地址：去掉 userinfo 与 query / fragment。
+ *
+ * 用户填的是完整地址，可能把凭据放进 query（`ws://host:6016?token=…`）或用 `user:pass@host`。
+ * 原样进 logcat 等于把口令写进系统日志——落盘侧的脱敏覆盖不到 logcat，只能在这里截掉。
+ */
+internal fun loggableUrl(raw: String): String {
+    val cut = raw.indexOfAny(charArrayOf('?', '#'))
+    val base = if (cut >= 0) raw.substring(0, cut) else raw
+    val scheme = base.indexOf("://")
+    if (scheme < 0) return base
+    val head = base.substring(0, scheme + 3)
+    val rest = base.substring(scheme + 3)
+    // userinfo 只可能在 authority 段（首个 '/' 之前）：路径里的 '@' 不是凭据，别一起吞掉
+    val at = rest.indexOf('@')
+    val slash = rest.indexOf('/')
+    return if (at >= 0 && (slash < 0 || at < slash)) head + rest.substring(at + 1) else base
 }
